@@ -45,6 +45,9 @@
   .banner{font-size:13px;padding:10px 16px;border-radius:10px;margin:16px auto 0;max-width:880px}
   .banner.warn{background:#FFF4E5;border:1px solid #F3C98B;color:#8a5a10}
   .banner.err{background:#FDECEA;border:1px solid #F1A9A0;color:#a3271b}
+  .banner.ios-hint{background:rgba(46,134,222,.1);border:1px solid rgba(46,134,222,.35);color:#1B5FA8;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .banner.ios-hint button{color:inherit;font-weight:700;flex:0 0 auto;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center}
+  .banner.ios-hint button:hover{background:rgba(46,134,222,.18)}
   .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:32px 0 18px;flex-wrap:wrap}
   .sec-head h2{font-family:'Bricolage Grotesque';font-weight:800;font-size:30px;letter-spacing:-.03em;line-height:1}
   .sec-head p{color:var(--slate);font-size:14px;margin-top:6px}
@@ -197,6 +200,7 @@
     </div>
   </div>
   <div id="storeBanner"></div>
+  <div id="iosBanner"></div>
   <main class="wrap" id="view"></main>
   <div id="detailRoot"></div>
   <div id="modalRoot"></div>
@@ -222,6 +226,7 @@ let state = { people: [], parties: [] };
 let me = localStorage.getItem("guestlist-me") || null;
 let currentTab = "parties";
 let openPartyId = null;
+let deferredInstallPrompt = null;
 let draftHolders = [];   // friends selected to receive a ticket in the current buy
 let draftSpares = 0;     // number of unassigned/spare tickets in the current buy
 let attendanceExpanded = false;
@@ -532,7 +537,8 @@ function peopleView(){
     :`<div class="empty"><div class="big">👋</div><h3>No one here yet</h3><p>Add the members of your friend group to get started.</p></div>`;
   const nLabel=notifLabel();
   const notifSection=nLabel?`<div class="panel" style="margin-top:20px"><h3>Notifications</h3><div class="sub">Get notified when a new party is added, and again on the day of each party.</div><button class="btn ghost sm" id="enableNotifs" style="margin-top:10px">${nLabel}</button></div>`:"";
-  return head+list+`<div class="add-row"><input id="newPersonName" placeholder="Add a friend's name…" maxlength="40"><button class="btn" id="addPerson">Add</button></div>`+notifSection;
+  const installSection=deferredInstallPrompt?`<div class="panel" style="margin-top:20px"><h3>Install app</h3><div class="sub">Add Shtamp to your home screen so it opens like a real app.</div><button class="btn ghost sm" id="installApp" style="margin-top:10px">📲 Install app</button></div>`:"";
+  return head+list+`<div class="add-row"><input id="newPersonName" placeholder="Add a friend's name…" maxlength="40"><button class="btn" id="addPerson">Add</button></div>`+notifSection+installSection;
 }
 function statsView(){
   const head=`<div class="sec-head"><div><h2>Party stats</h2><p>How many past parties each person actually went to (marked "going", party date already passed).</p></div></div>`;
@@ -673,6 +679,8 @@ function wireView(){
   });
   const notifBtn=document.getElementById("enableNotifs");
   if(notifBtn) notifBtn.onclick=enablePushNotifications;
+  const installBtn=document.getElementById("installApp");
+  if(installBtn) installBtn.onclick=installApp;
 }
 function wireDetail(){
   document.getElementById("backBtn").onclick=()=>{openPartyId=null;render();};
@@ -774,6 +782,34 @@ function openEditPartyModal(p){
   };
   nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
 }
+/* ---------- iOS install hint ---------- */
+function isIos(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream; }
+function isInStandaloneMode(){ return ("standalone" in window.navigator) && window.navigator.standalone; }
+function renderIosBanner(){
+  const el=document.getElementById("iosBanner");
+  if(!el) return;
+  const dismissed=localStorage.getItem("shtamp-ios-hint-dismissed");
+  if(!isIos()||isInStandaloneMode()||dismissed){ el.innerHTML=""; return; }
+  el.innerHTML=`<div class="banner ios-hint"><span>📲 Get the app: open this page in <b>Safari</b>, tap the <b>Share</b> icon, then <b>"Add to Home Screen"</b>.</span><button type="button" id="dismissIosHint" title="Dismiss">✕</button></div>`;
+  document.getElementById("dismissIosHint").onclick=()=>{ localStorage.setItem("shtamp-ios-hint-dismissed","1"); el.innerHTML=""; };
+}
+/* ---------- install prompt ---------- */
+window.addEventListener("beforeinstallprompt",(e)=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  render();
+});
+window.addEventListener("appinstalled",()=>{
+  deferredInstallPrompt=null;
+  render();
+});
+async function installApp(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt=null;
+  render();
+}
 /* ---------- push notifications ---------- */
 function notifLabel(){
   if(!("Notification" in window)||!("serviceWorker" in navigator)||!("PushManager" in window)) return null;
@@ -812,6 +848,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElem
 
 /* ---------- boot ---------- */
 (async function(){
+  renderIosBanner();
   if(!configured){
     document.getElementById("view").innerHTML=`<div class="setup"><h1>Almost there 🎟</h1><p>This app reads its database keys from a file called <code>config.js</code>. Open that file, paste your Supabase <code>Project URL</code> and key between the quotes, save, and re-deploy the folder.</p><p>You only ever edit <code>config.js</code> — the app file stays as-is.</p></div>`;
     return;
