@@ -1,0 +1,14 @@
+{
+  "name": "Shtamp",
+  "short_name": "Shtamp",
+  "description": "Track who's going, who's hosting the pre-party, and who's got tickets.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F3F1EA",
+  "theme_color": "#241E2E",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

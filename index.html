@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shtamp — party tracker</title>
+<meta name="description" content="Track who's going, who's hosting the pre-party, and who's got tickets.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="theme-color" content="#241E2E">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shtamp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<style>
+  :root{
+    --ink:#241E2E;--paper:#F3F1EA;--card:#FFFDF9;--vermilion:#FF4A2B;--jade:#12A66E;
+    --amber:#E7920C;--slate:#8A8598;--line:rgba(36,30,46,.12);--line-strong:rgba(36,30,46,.22);
+    --shadow:0 1px 2px rgba(36,30,46,.06), 0 8px 24px rgba(36,30,46,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--paper);color:var(--ink);font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  body{min-height:100vh;padding:0 0 64px}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  input,select{font-family:inherit;font-size:15px}
+  ::selection{background:var(--vermilion);color:#fff}
+  :focus-visible{outline:2.5px solid var(--vermilion);outline-offset:2px;border-radius:4px}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px}
+  .topbar{position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line)}
+  .topbar-inner{display:flex;align-items:center;gap:16px;padding:16px 20px;max-width:920px;margin:0 auto;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Bricolage Grotesque';font-weight:800;font-size:22px;letter-spacing:-.02em;margin-right:auto}
+  .brand .tk{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;background:#fff;border:1px solid var(--line);border-radius:9px;transform:rotate(-8deg);overflow:hidden}
+  .brand .tk img{width:100%;height:100%;object-fit:cover}
+  .me{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate)}
+  .me select{background:var(--card);border:1px solid var(--line-strong);border-radius:999px;padding:7px 12px;font-weight:600;color:var(--ink)}
+  .tabs{display:flex;gap:4px;background:rgba(36,30,46,.06);padding:4px;border-radius:999px}
+  .tab{padding:7px 16px;border-radius:999px;font-weight:600;font-size:14px;color:var(--slate)}
+  .tab[aria-selected="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(36,30,46,.1)}
+  .banner{font-size:13px;padding:10px 16px;border-radius:10px;margin:16px auto 0;max-width:880px}
+  .banner.warn{background:#FFF4E5;border:1px solid #F3C98B;color:#8a5a10}
+  .banner.err{background:#FDECEA;border:1px solid #F1A9A0;color:#a3271b}
+  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:32px 0 18px;flex-wrap:wrap}
+  .sec-head h2{font-family:'Bricolage Grotesque';font-weight:800;font-size:30px;letter-spacing:-.03em;line-height:1}
+  .sec-head p{color:var(--slate);font-size:14px;margin-top:6px}
+  .btn{display:inline-flex;align-items:center;gap:7px;background:var(--ink);color:var(--paper);font-weight:600;font-size:14px;padding:11px 18px;border-radius:999px;transition:transform .12s ease, filter .12s ease}
+  .btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn.accent{background:var(--vermilion);color:#fff}
+  .btn.ghost{background:transparent;border:1px solid var(--line-strong);color:var(--ink)}
+  .btn.sm{padding:8px 13px;font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
+  .ticket{position:relative;display:flex;background:var(--card);border-radius:16px;box-shadow:var(--shadow);overflow:hidden;cursor:pointer;transition:transform .14s ease, box-shadow .14s ease;text-align:left;width:100%}
+  .ticket:hover{transform:translateY(-3px);box-shadow:0 4px 8px rgba(36,30,46,.08), 0 18px 40px rgba(36,30,46,.14)}
+  .ticket .stub{flex:0 0 84px;background:var(--ink);color:var(--paper);padding:18px 0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ticket .stub .day{font-family:'Bricolage Grotesque';font-weight:800;font-size:34px;line-height:.9}
+  .ticket .stub .mon{font-family:'Space Mono';font-size:12px;letter-spacing:.15em;text-transform:uppercase;margin-top:4px;opacity:.85}
+  .ticket .stub .dow{font-family:'Space Mono';font-size:10px;letter-spacing:.1em;opacity:.55;margin-top:8px}
+  .perf{position:relative;flex:0 0 0;border-left:2px dashed var(--line-strong)}
+  .perf::before,.perf::after{content:"";position:absolute;left:-9px;width:16px;height:16px;background:var(--paper);border-radius:50%}
+  .perf::before{top:-8px} .perf::after{bottom:-8px}
+  .ticket .body{flex:1;padding:16px 18px;min-width:0}
+  .ticket .name{font-family:'Bricolage Grotesque';font-weight:700;font-size:19px;letter-spacing:-.02em;line-height:1.15;word-break:break-word}
+  .ticket .loc{color:var(--slate);font-size:13px;margin-top:5px;display:flex;align-items:center;gap:5px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px}
+  .chip{font-family:'Space Mono';font-size:11px;font-weight:700;padding:4px 9px;border-radius:7px;display:inline-flex;align-items:center;gap:5px}
+  .chip.go{background:rgba(18,166,110,.12);color:var(--jade)}
+  .chip.tk{background:rgba(255,74,43,.11);color:var(--vermilion)}
+  .chip.mb{background:rgba(231,146,12,.14);color:var(--amber)}
+  .chip.warn{background:rgba(36,30,46,.06);color:var(--slate)}
+  .empty{text-align:center;padding:56px 20px;border:2px dashed var(--line-strong);border-radius:18px;color:var(--slate)}
+  .empty .big{font-size:40px;margin-bottom:12px}
+  .empty h3{font-family:'Bricolage Grotesque';font-weight:700;font-size:20px;color:var(--ink);margin-bottom:6px}
+  .empty p{font-size:14px;max-width:360px;margin:0 auto 18px}
+  .people-list{display:flex;flex-direction:column;gap:8px}
+  .person-row{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .avatar{flex:0 0 38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Bricolage Grotesque';font-weight:700;color:#fff;font-size:15px}
+  .person-row .pname{font-weight:600;flex:1}
+  .add-row{display:flex;gap:8px;margin-top:14px}
+  .add-row input{flex:1;background:var(--card);border:1px solid var(--line-strong);border-radius:10px;padding:12px 14px}
+  .detail{position:fixed;inset:0;z-index:40;background:var(--paper);overflow-y:auto}
+  .detail-enter{animation:slideup .22s ease}
+  @keyframes slideup{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  .detail-head{background:var(--ink);color:var(--paper);padding:20px 0 26px}
+  .back{display:inline-flex;align-items:center;gap:6px;color:var(--paper);opacity:.8;font-weight:600;font-size:14px;margin-bottom:18px}
+  .back:hover{opacity:1}
+  .detail-head h1{font-family:'Bricolage Grotesque';font-weight:800;font-size:34px;letter-spacing:-.03em;line-height:1.05}
+  .detail-meta{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-family:'Space Mono';font-size:13px;opacity:.85}
+  .detail-meta span{display:inline-flex;align-items:center;gap:6px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:-22px 0 8px;position:relative;z-index:1}
+  .stat{background:var(--card);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+  .stat .n{font-family:'Bricolage Grotesque';font-weight:800;font-size:28px;line-height:1}
+  .stat .l{font-size:12px;color:var(--slate);margin-top:4px;font-weight:500}
+  .stat.go .n{color:var(--jade)} .stat.tk .n{color:var(--vermilion)} .stat.gap .n{color:var(--amber)}
+  .stat-group{width:100%;text-align:center;display:flex;flex-direction:column;gap:8px}
+  .stat-mini-row{display:flex;justify-content:space-around;gap:6px}
+  .stat-mini{flex:1}
+  .stat-mini .n{font-size:21px}
+  .stat-hint{font-size:11px;color:var(--slate);font-weight:600}
+  .n.go{color:var(--jade)} .n.mb{color:var(--amber)} .n.cant{color:var(--slate)} .n.tk{color:var(--vermilion)} .n.sp{color:var(--amber)}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 18px 20px;margin-top:20px}
+  .panel h3{font-family:'Bricolage Grotesque';font-weight:700;font-size:18px;margin-bottom:2px}
+  .panel .sub{color:var(--slate);font-size:13px;margin-bottom:16px}
+  .att-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+  .att-row:first-of-type{border-top:none}
+  .att-row .who{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+  .att-row .who .pname{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hasticket{color:var(--vermilion);font-size:13px;flex:0 0 auto}
+  .seg{display:flex;gap:4px;background:rgba(36,30,46,.05);padding:3px;border-radius:999px;flex:0 0 auto}
+  .seg button{padding:6px 11px;border-radius:999px;font-size:12.5px;font-weight:600;color:var(--slate);white-space:nowrap}
+  .seg button[data-on="going"]{background:var(--jade);color:#fff}
+  .seg button[data-on="maybe"]{background:var(--amber);color:#fff}
+  .seg button[data-on="no"]{background:var(--slate);color:#fff}
+  .tk-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:14px}
+  .tk-item:first-of-type{border-top:none}
+  .tk-item .arrow{color:var(--vermilion);font-weight:700}
+  .tk-item .spare{color:var(--slate);font-style:italic}
+  .tk-form{display:flex;flex-direction:column;gap:11px;align-items:stretch;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  .tk-row{display:flex;align-items:center;gap:10px}
+  .tk-row .lbl{flex:0 0 78px;font-size:13px;color:var(--slate);font-weight:600}
+  .tk-form select{flex:1;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px;font-weight:500}
+  .tk-form .lbl{font-size:13px;color:var(--slate);font-weight:600}
+  .tk-chips{display:flex;flex-wrap:wrap;gap:6px;padding-left:88px}
+  .tk-chips:empty{display:none}
+  .tk-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(18,166,110,.12);color:var(--jade);font-weight:600;font-size:13px;padding:5px 6px 5px 11px;border-radius:999px}
+  .tk-chip button{color:inherit;font-weight:700;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px}
+  .tk-chip button:hover{background:rgba(18,166,110,.2)}
+  .tk-chip.spare{background:rgba(231,146,12,.16);color:var(--amber)}
+  .tk-chip.spare button:hover{background:rgba(231,146,12,.28)}
+  .tk-chip select.tk-claim{border:none;background:transparent;font:inherit;font-weight:600;color:inherit;padding:0;margin:0;cursor:pointer;max-width:110px}
+  .tk-chip select.tk-claim:focus-visible{outline-offset:2px}
+  .stepper{display:flex;align-items:center;gap:10px}
+  .stepper button{width:32px;height:32px;border-radius:8px;background:var(--paper);border:1px solid var(--line-strong);font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+  .stepper button:hover{border-color:var(--vermilion);color:var(--vermilion)}
+  .stepper>span{min-width:22px;text-align:center;font-weight:700;font-family:'Space Mono'}
+  .stepper-hint{font-size:12px;color:var(--slate);font-weight:500}
+  .tk-price-input{flex:1;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px}
+  .tk-price{font-family:'Space Mono';font-weight:700;font-size:13px;color:var(--vermilion);white-space:nowrap}
+  .tk-total{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:14px;text-align:right}
+  .tk-badge{font-family:'Space Mono';font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;white-space:nowrap;flex:0 0 auto}
+  .tk-badge.held{background:rgba(255,74,43,.11);color:var(--vermilion)}
+  .tk-badge.spare{background:rgba(231,146,12,.16);color:var(--amber)}
+  .tk-badge.none{background:rgba(36,30,46,.06);color:var(--slate)}
+  .roster-group-label{font-family:'Space Mono';font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--slate);padding:14px 0 6px}
+  .roster-group-label:first-child{padding-top:0}
+  .roster-group-label.go{color:var(--jade)}
+  .roster-group-label.mb{color:var(--amber)}
+  .roster-group-label.cant{color:var(--slate)}
+  .link-danger{color:var(--slate);font-size:13px;font-weight:600}
+  .link-danger:hover{color:var(--vermilion)}
+  .icon-x{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;color:var(--slate);font-size:16px}
+  .icon-x:hover{background:rgba(255,74,43,.12);color:var(--vermilion)}
+  .footer-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:16px;border-top:1px solid var(--line);gap:12px;flex-wrap:wrap}
+  .panel textarea{width:100%;background:var(--paper);border:1px solid var(--line-strong);border-radius:10px;padding:12px 14px;font-family:inherit;font-size:14px;resize:vertical}
+  .confetti-piece{position:fixed;top:-14px;width:8px;height:14px;z-index:999;pointer-events:none;border-radius:2px;animation-name:confetti-fall;animation-timing-function:cubic-bezier(.35,0,.65,1);animation-fill-mode:forwards}
+  @keyframes confetti-fall{0%{transform:translateY(0) translateX(0) rotate(0deg);opacity:1}100%{transform:translateY(100vh) translateX(calc(var(--dx)*140px)) rotate(var(--rot));opacity:0}}
+  .mega-flash{position:fixed;top:16%;left:50%;transform:translateX(-50%);z-index:1000;font-family:'Bricolage Grotesque';font-weight:800;font-size:clamp(18px,4vw,32px);color:var(--vermilion);background:var(--card);padding:14px 26px;border-radius:999px;box-shadow:0 8px 30px rgba(36,30,46,.25);animation:mega-pop 2s ease forwards;pointer-events:none;text-align:center;white-space:nowrap;max-width:90vw}
+  @keyframes mega-pop{0%{opacity:0;transform:translateX(-50%) scale(.6)}12%{opacity:1;transform:translateX(-50%) scale(1.08)}20%{transform:translateX(-50%) scale(1)}82%{opacity:1}100%{opacity:0;transform:translateX(-50%) scale(.96)}}
+  .modal-bg{position:fixed;inset:0;z-index:60;background:rgba(36,30,46,.45);display:flex;align-items:center;justify-content:center;padding:20px;animation:fade .15s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{background:var(--card);border-radius:18px;padding:24px;width:100%;max-width:420px;box-shadow:0 20px 60px rgba(36,30,46,.3)}
+  .modal h3{font-family:'Bricolage Grotesque';font-weight:800;font-size:22px;margin-bottom:18px;letter-spacing:-.02em}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:13px;font-weight:600;color:var(--slate);margin-bottom:6px}
+  .field input{width:100%;background:var(--paper);border:1px solid var(--line-strong);border-radius:10px;padding:12px 14px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+  .setup{max-width:640px;margin:60px auto;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:32px}
+  .setup h1{font-family:'Bricolage Grotesque';font-weight:800;font-size:26px;margin-bottom:12px;letter-spacing:-.02em}
+  .setup p{color:var(--slate);font-size:15px;line-height:1.6;margin-bottom:12px}
+  .setup code{font-family:'Space Mono';background:var(--paper);padding:2px 6px;border-radius:5px;font-size:13px;color:var(--vermilion)}
+  @media (max-width:560px){
+    .brand{font-size:19px}.sec-head h2{font-size:24px}.detail-head h1{font-size:26px}
+    .att-row{flex-wrap:wrap}
+    .att-row .who{flex:1 1 100%}
+    .seg{flex:1 1 100%;justify-content:space-between}
+    .seg button{padding:8px 9px;flex:1}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="tk"><img src="icons/icon-192.png" alt=""></span> Shtamp</div>
+      <div class="me">I'm <select id="meSelect"><option value="">—</option></select></div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="parties" aria-selected="true">Parties</button>
+        <button class="tab" role="tab" data-tab="people" aria-selected="false">Crew</button>
+        <button class="tab" role="tab" data-tab="stats" aria-selected="false">Stats</button>
+        <button class="tab" role="tab" data-tab="archive" aria-selected="false">Archive</button>
+      </div>
+    </div>
+  </div>
+  <div id="storeBanner"></div>
+  <main class="wrap" id="view"></main>
+  <div id="detailRoot"></div>
+  <div id="modalRoot"></div>
+
+<script>
+/* ============================================================
+   Shtamp — hosted version (Supabase backend)
+   ------------------------------------------------------------
+   1. Create a free project at supabase.com
+   2. Run the SQL schema (provided separately) in the SQL editor
+   3. Paste your Project URL and anon/public key below
+   4. Deploy this file to Netlify (or any static host)
+   ============================================================ */
+const SUPABASE_URL      = window.SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || "";
+
+const configured = SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY.length > 20;
+const supa = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const AVATAR_COLORS = ["#FF4A2B","#12A66E","#E7920C","#6C5CE7","#0FA3B1","#E84393","#00897B","#8E44AD","#D35400","#2E86DE","#16A085","#C0392B","#7F8C8D","#2C3E50","#EA8685"];
+
+let state = { people: [], parties: [] };
+let me = localStorage.getItem("guestlist-me") || null;
+let currentTab = "parties";
+let openPartyId = null;
+let draftHolders = [];   // friends selected to receive a ticket in the current buy
+let draftSpares = 0;     // number of unassigned/spare tickets in the current buy
+let attendanceExpanded = false;
+let ticketsExpanded = false;
+let justOpenedParty = false;
+function openParty(id){ openPartyId=id; draftHolders=[]; draftSpares=0; attendanceExpanded=false; ticketsExpanded=false; justOpenedParty=true; render(); }
+
+/* ---------- utils ---------- */
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id"+Math.random().toString(36).slice(2));
+const esc = s => (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const personName = id => { const p = state.people.find(x=>x.id===id); return p?p.name:"?"; };
+const colorFor = id => { const p = state.people.find(x=>x.id===id); return (p&&p.color)||AVATAR_COLORS[0]; };
+const initials = name => name.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase();
+function fmtDate(d){
+  if(!d) return null;
+  const dt = new Date(d+"T00:00:00"); if(isNaN(dt)) return null;
+  return {day:dt.getDate(),mon:dt.toLocaleString("en-US",{month:"short"}).toUpperCase(),
+    dow:dt.toLocaleString("en-US",{weekday:"short"}).toUpperCase(),
+    full:dt.toLocaleString("en-US",{weekday:"long",month:"long",day:"numeric"})};
+}
+function partyStats(p){
+  const att=p.attendance||{};
+  const going=Object.values(att).filter(v=>v==="going").length;
+  const maybe=Object.values(att).filter(v=>v==="maybe").length;
+  const cant=Object.values(att).filter(v=>v==="no").length;
+  const tks=(p.tickets||[]);
+  const tickets=tks.length;
+  const spares=tks.filter(t=>!t.holderId).length;
+  const covered=new Set(tks.filter(t=>t.holderId).map(t=>t.holderId));
+  const goingNoTicket=Object.entries(att).filter(([id,v])=>v==="going"&&!covered.has(id)).length;
+  return {going,maybe,cant,tickets,spares,goingNoTicket,covered};
+}
+const heldBy = (p,id) => (p.tickets||[]).filter(t=>t.holderId===id).length;      // tickets claimed by this person
+const sparesBy = (p,id) => (p.tickets||[]).filter(t=>t.buyerId===id&&!t.holderId).length; // unclaimed tickets this person bought
+function sortedPeople(){
+  return [...state.people].sort((a,b)=>a.name.localeCompare(b.name));
+}
+function sortedParties(){
+  return [...state.parties].sort((a,b)=>{
+    if(a.date&&b.date) return a.date.localeCompare(b.date);
+    if(a.date) return -1; if(b.date) return 1; return 0;
+  });
+}
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const isPastParty=p=>!!(p.date && p.date<todayStr());
+const upcomingParties=()=>sortedParties().filter(p=>!isPastParty(p));
+const archivedParties=()=>[...state.parties].filter(isPastParty).sort((a,b)=>b.date.localeCompare(a.date));
+const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
+
+/* ---------- celebration effects ---------- */
+const CONFETTI_COLORS=["#FF4A2B","#12A66E","#E7920C","#6C5CE7","#0FA3B1","#E84393","#00897B","#2E86DE"];
+function spawnConfetti(count,minVw,maxVw,sizeScale){
+  sizeScale=sizeScale||1;
+  for(let i=0;i<count;i++){
+    const el=document.createElement("div");
+    el.className="confetti-piece";
+    el.style.left=(minVw+Math.random()*(maxVw-minVw))+"vw";
+    el.style.background=CONFETTI_COLORS[i%CONFETTI_COLORS.length];
+    el.style.width=(6*sizeScale+Math.random()*4)+"px";
+    el.style.height=(10*sizeScale+Math.random()*6)+"px";
+    el.style.setProperty("--dx",(Math.random()*2-1).toFixed(2));
+    el.style.setProperty("--rot",(Math.random()*720-360).toFixed(0)+"deg");
+    el.style.animationDuration=(1+Math.random()*0.9)+"s";
+    el.style.animationDelay=(Math.random()*0.2)+"s";
+    document.body.appendChild(el);
+    el.addEventListener("animationend",()=>el.remove());
+  }
+}
+function confettiBurst(){ spawnConfetti(90,35,65,1); }
+function megaFireworks(){
+  spawnConfetti(70,0,100,1.3);
+  setTimeout(()=>spawnConfetti(50,0,100,1.1),200);
+  setTimeout(()=>spawnConfetti(50,0,100,1.1),420);
+  const flash=document.createElement("div");
+  flash.className="mega-flash";
+  flash.textContent="🎉🔥 THE CREW IS HERE 🔥🎉";
+  document.body.appendChild(flash);
+  setTimeout(()=>flash.remove(),2000);
+}
+
+/* ---------- countdown ---------- */
+function daysUntil(dateStr){
+  if(!dateStr) return null;
+  const target=new Date(dateStr+"T00:00:00");
+  const today=new Date(); today.setHours(0,0,0,0);
+  return Math.round((target-today)/86400000);
+}
+function countdownLabel(dateStr){
+  const days=daysUntil(dateStr);
+  if(days===null) return "";
+  if(days===0) return "🎉 today!";
+  if(days===1) return "tomorrow!";
+  if(days>1) return `in ${days} days`;
+  if(days===-1) return "yesterday";
+  return `${Math.abs(days)} days ago`;
+}
+
+/* ============================================================
+   DATA LAYER (Supabase)
+   ============================================================ */
+let lastError = null;
+async function fetchAll(){
+  const [pe,pa,at,tk,ph,ppa] = await Promise.all([
+    supa.from("people").select("*").order("created_at"),
+    supa.from("parties").select("*").order("date",{ascending:true,nullsFirst:false}),
+    supa.from("attendance").select("*"),
+    supa.from("tickets").select("*").order("created_at"),
+    supa.from("preparty_hosts").select("*"),
+    supa.from("preparty_attendance").select("*"),
+  ]);
+  lastError = pe.error||pa.error||at.error||tk.error||ph.error||ppa.error||null;
+  const people = pe.data||[];
+  const parties = (pa.data||[]).map(p=>({...p, attendance:{}, tickets:[], prepartyHosts:[], prepartyAttendance:{}}));
+  const byId = Object.fromEntries(parties.map(p=>[p.id,p]));
+  (at.data||[]).forEach(a=>{ if(byId[a.party_id]) byId[a.party_id].attendance[a.person_id]=a.status; });
+  (tk.data||[]).forEach(t=>{ if(byId[t.party_id]) byId[t.party_id].tickets.push({id:t.id,buyerId:t.buyer_id,holderId:t.holder_id,price:t.price}); });
+  (ph.data||[]).forEach(h=>{ if(byId[h.party_id]) byId[h.party_id].prepartyHosts.push(h.person_id); });
+  (ppa.data||[]).forEach(a=>{ if(byId[a.party_id]) byId[a.party_id].prepartyAttendance[a.person_id]=a.status; });
+  state = {people, parties};
+}
+async function refresh(){ if(!configured) return; await fetchAll(); render(); }
+
+async function addPerson(name){
+  const color = AVATAR_COLORS[state.people.length % AVATAR_COLORS.length];
+  await supa.from("people").insert({name, color}); await refresh();
+}
+async function renamePerson(id,name){
+  const n=(name||"").trim(); if(!n) return;
+  await supa.from("people").update({name:n}).eq("id",id);
+  await refresh();
+}
+async function delPerson(id){
+  await supa.from("people").delete().eq("id",id);
+  if(me===id){ me=null; localStorage.removeItem("guestlist-me"); }
+  await refresh();
+}
+async function addParty(o){
+  const {data} = await supa.from("parties")
+    .insert({name:o.name, date:o.date||null, location:o.location||null, genre:o.genre||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null}).select().single();
+  await refresh(); return data&&data.id;
+}
+async function delParty(id){ await supa.from("parties").delete().eq("id",id); await refresh(); }
+async function updateParty(partyId,o){
+  await supa.from("parties").update({name:o.name, date:o.date||null, location:o.location||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null, genre:o.genre||null}).eq("id",partyId);
+  await refresh();
+}
+async function updateLogistics(partyId,notes){ await supa.from("parties").update({notes:notes||null}).eq("id",partyId); await refresh(); }
+function exportGuestList(partyId){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p) return;
+  const att=p.attendance||{};
+  const groups={going:[],maybe:[],no:[],none:[]};
+  sortedPeople().forEach(person=>{ groups[att[person.id]||"none"].push(person.name); });
+  const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
+  const d=fmtDate(p.date);
+  const lines=[`Guest list — ${p.name}`];
+  if(d) lines.push(d.full); else if(p.date) lines.push(p.date); else lines.push("Date: TBD");
+  if(p.location) lines.push(`Location: ${p.location}`);
+  if(p.headliners&&p.headliners.length) lines.push(`Headliners: ${p.headliners.join(", ")}`);
+  if(p.genre) lines.push(`Genre: ${p.genre}`);
+  lines.push("");
+  lines.push(`Going (${groups.going.length}):`);
+  (groups.going.length?groups.going:["—"]).forEach(n=>lines.push(`  - ${n}`));
+  lines.push("");
+  lines.push(`Maybe (${groups.maybe.length}):`);
+  (groups.maybe.length?groups.maybe:["—"]).forEach(n=>lines.push(`  - ${n}`));
+  lines.push("");
+  lines.push(`Can't make it (${groups.no.length}):`);
+  (groups.no.length?groups.no:["—"]).forEach(n=>lines.push(`  - ${n}`));
+  lines.push("");
+  lines.push(`Not yet responded (${groups.none.length}):`);
+  (groups.none.length?groups.none:["—"]).forEach(n=>lines.push(`  - ${n}`));
+  if((p.tickets||[]).length){
+    lines.push("");
+    lines.push("Tickets:");
+    const byBuyer=new Map();
+    p.tickets.forEach(t=>{ if(!byBuyer.has(t.buyerId)) byBuyer.set(t.buyerId,[]); byBuyer.get(t.buyerId).push(t); });
+    byBuyer.forEach((tks,buyerId)=>{
+      const total=tks.reduce((s,t)=>s+(Number(t.price)||0),0);
+      const forWho=tks.map(t=>t.holderId?personName(t.holderId):"a spare").join(", ");
+      lines.push(`  - ${personName(buyerId)} bought ${tks.length} ticket${tks.length>1?"s":""} for ${forWho}${total>0?` (${money(total)})`:""}`);
+    });
+  }
+  if(p.notes){ lines.push(""); lines.push("Notes:"); lines.push(p.notes); }
+  const blob=new Blob([lines.join("\n")],{type:"text/plain"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=`${p.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-guest-list.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+async function setAtt(partyId,personId,status){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p) return;
+  const cur=p.attendance[personId];
+  const becameGoing=status==="going"&&cur!==status;
+  const turningOff=cur===status;
+  if(turningOff) delete p.attendance[personId]; else p.attendance[personId]=status;
+  render();
+  const r1=turningOff
+    ? await supa.from("attendance").delete().eq("party_id",partyId).eq("person_id",personId)
+    : await supa.from("attendance").upsert({party_id:partyId,person_id:personId,status},{onConflict:"party_id,person_id"});
+  if(r1.error) await refresh();
+  if(becameGoing&&personId===me){
+    const pct=state.people.length?partyStats(p).going/state.people.length:0;
+    if(pct>0.9) megaFireworks(); else confettiBurst();
+  }
+}
+async function togglePrepartyHost(partyId,personId){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p) return;
+  const isHost=(p.prepartyHosts||[]).includes(personId);
+  p.prepartyHosts=isHost?p.prepartyHosts.filter(id=>id!==personId):[...(p.prepartyHosts||[]),personId];
+  render();
+  const r=isHost
+    ? await supa.from("preparty_hosts").delete().eq("party_id",partyId).eq("person_id",personId)
+    : await supa.from("preparty_hosts").insert({party_id:partyId,person_id:personId});
+  if(r.error) await refresh();
+}
+async function setPrepartyAtt(partyId,personId,status){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p) return;
+  p.prepartyAttendance=p.prepartyAttendance||{};
+  const cur=p.prepartyAttendance[personId];
+  const turningOff=cur===status;
+  if(turningOff) delete p.prepartyAttendance[personId]; else p.prepartyAttendance[personId]=status;
+  render();
+  const r=turningOff
+    ? await supa.from("preparty_attendance").delete().eq("party_id",partyId).eq("person_id",personId)
+    : await supa.from("preparty_attendance").upsert({party_id:partyId,person_id:personId,status},{onConflict:"party_id,person_id"});
+  if(r.error) await refresh();
+}
+async function addTickets(partyId,buyerId,holderIds,spares,price){
+  const rows=[];
+  holderIds.forEach(h=>rows.push({party_id:partyId,buyer_id:buyerId,holder_id:h,price}));
+  for(let i=0;i<spares;i++) rows.push({party_id:partyId,buyer_id:buyerId,holder_id:null,price});
+  if(rows.length) await supa.from("tickets").insert(rows);
+  const p=state.parties.find(x=>x.id===partyId);
+  for(const h of holderIds){ if(p&&!p.attendance[h]) await supa.from("attendance").upsert({party_id:partyId,person_id:h,status:"going"},{onConflict:"party_id,person_id"}); }
+  await refresh();
+}
+async function delTicket(id){
+  const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===id));
+  if(p) p.tickets=p.tickets.filter(t=>t.id!==id);
+  render();
+  const {error}=await supa.from("tickets").delete().eq("id",id);
+  if(error) await refresh();
+}
+async function claimTicket(ticketId,holderId){
+  const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===ticketId));
+  const wasGoing=p&&holderId?!!p.attendance[holderId]:true;
+  if(p){
+    const t=p.tickets.find(x=>x.id===ticketId);
+    if(t) t.holderId=holderId||null;
+    if(holderId&&!wasGoing) p.attendance[holderId]="going";
+  }
+  render();
+  const r1=await supa.from("tickets").update({holder_id:holderId||null}).eq("id",ticketId);
+  let r2={error:null};
+  if(holderId&&!wasGoing) r2=await supa.from("attendance").upsert({party_id:p.id,person_id:holderId,status:"going"},{onConflict:"party_id,person_id"});
+  if(r1.error||r2.error) await refresh();
+}
+
+/* ============================================================
+   RENDER  (identical UI to the local version)
+   ============================================================ */
+function render(){
+  renderMeSelect();
+  document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
+  document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="people" ? peopleView() : currentTab==="stats" ? statsView() : archiveView();
+  wireView(); renderDetail(); renderBanner();
+}
+function renderBanner(){
+  const el=document.getElementById("storeBanner");
+  el.innerHTML = lastError
+    ? `<div class="banner err">⚠️ Couldn't reach the database. Check that your keys are pasted correctly and the table policies allow access. (${esc(lastError.message||"")})</div>`
+    : "";
+}
+function renderMeSelect(){
+  const sel=document.getElementById("meSelect");
+  sel.innerHTML = `<option value="">—</option>`+sortedPeople().map(p=>`<option value="${p.id}" ${p.id===me?"selected":""}>${esc(p.name)}</option>`).join("");
+}
+function partiesView(){
+  const parties=upcomingParties();
+  const head=`<div class="sec-head"><div><h2>Upcoming parties</h2><p>Tap a ticket to see who's in and who's got tickets.</p></div><button class="btn accent" id="newParty">＋ New party</button></div>`;
+  if(!parties.length) return head+`<div class="empty"><div class="big">🎉</div><h3>No parties yet</h3><p>Add your first one — a festival, a birthday, a night out — and start marking who's coming.</p><button class="btn accent" id="newPartyEmpty">＋ Add a party</button></div>`;
+  const cards=parties.map(p=>partyCard(p)).join("");
+  return head+`<div class="grid">${cards}</div>`;
+}
+function partyCard(p){
+  const st=partyStats(p), d=fmtDate(p.date);
+  const stub=d?`<div class="stub"><div class="day">${d.day}</div><div class="mon">${d.mon}</div><div class="dow">${d.dow}</div></div>`
+    :`<div class="stub"><div class="mon" style="writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.2em">TBD</div></div>`;
+  const chips=[`<span class="chip go">✓ ${st.going} going</span>`,st.maybe?`<span class="chip mb">? ${st.maybe} maybe</span>`:"",`<span class="chip tk">🎟 ${st.tickets} tickets</span>`,st.goingNoTicket?`<span class="chip warn">${st.goingNoTicket} need one</span>`:""].filter(Boolean).join("");
+  return `<button class="ticket" data-open="${p.id}">${stub}<div class="perf"></div><div class="body"><div class="name">${esc(p.name)}</div>${p.location?`<div class="loc">📍 ${esc(p.location)}</div>`:""}${(p.headliners&&p.headliners.length)?`<div class="loc">🎤 ${esc(p.headliners.join(", "))}</div>`:""}${p.genre?`<div class="loc">🎵 ${esc(p.genre)}</div>`:""}<div class="chips">${chips}</div></div></button>`;
+}
+function archiveView(){
+  const parties=archivedParties();
+  const head=`<div class="sec-head"><div><h2>Archive</h2><p>Past parties, moved here automatically once they're over.</p></div></div>`;
+  if(!parties.length) return head+`<div class="empty"><div class="big">🗄️</div><h3>No past parties yet</h3><p>Once a dated party is over, it'll show up here automatically.</p></div>`;
+  const cards=parties.map(p=>partyCard(p)).join("");
+  return head+`<div class="grid">${cards}</div>`;
+}
+function peopleView(){
+  const head=`<div class="sec-head"><div><h2>The crew</h2><p>Everyone in the group. Add friends so you can tag them on parties.</p></div></div>`;
+  const list=state.people.length
+    ?`<div class="people-list">${sortedPeople().map(p=>`<div class="person-row"><div class="avatar" style="background:${colorFor(p.id)}">${esc(initials(p.name))}</div><div class="pname">${esc(p.name)}${p.id===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</div><button class="icon-x" data-editperson="${p.id}" title="Rename">✎</button><button class="icon-x" data-delperson="${p.id}" title="Remove">✕</button></div>`).join("")}</div>`
+    :`<div class="empty"><div class="big">👋</div><h3>No one here yet</h3><p>Add the members of your friend group to get started.</p></div>`;
+  const nLabel=notifLabel();
+  const notifSection=nLabel?`<div class="panel" style="margin-top:20px"><h3>Notifications</h3><div class="sub">Get notified when a new party is added, and again on the day of each party.</div><button class="btn ghost sm" id="enableNotifs" style="margin-top:10px">${nLabel}</button></div>`:"";
+  return head+list+`<div class="add-row"><input id="newPersonName" placeholder="Add a friend's name…" maxlength="40"><button class="btn" id="addPerson">Add</button></div>`+notifSection;
+}
+function statsView(){
+  const head=`<div class="sec-head"><div><h2>Party stats</h2><p>How many past parties each person actually went to (marked "going", party date already passed).</p></div></div>`;
+  if(!state.people.length) return head+`<div class="empty"><div class="big">📊</div><h3>No crew yet</h3><p>Add people in the Crew tab to start tracking stats.</p></div>`;
+  const rows=state.people.map(p=>{
+    const attended=sortedParties().filter(party=>isPastParty(party) && (party.attendance||{})[p.id]==="going");
+    return {person:p, count:attended.length, parties:attended};
+  }).sort((a,b)=>b.count-a.count || a.person.name.localeCompare(b.person.name));
+  if(!rows.some(r=>r.count>0)) return head+`<div class="empty"><div class="big">📊</div><h3>No stats yet</h3><p>Once a dated party is in the past and people were marked "going", their tallies will show up here.</p></div>`;
+  const medals=["🥇","🥈","🥉"];
+  const list=rows.map((r,i)=>{
+    const medal=r.count>0?(medals[i]||""):"";
+    const chips=r.parties.length?`<div class="chips" style="margin-top:8px">${r.parties.map(party=>`<span class="chip go">${esc(party.name)}</span>`).join("")}</div>`:`<div class="sub" style="margin-top:2px">No parties yet</div>`;
+    return `<div class="person-row" style="align-items:flex-start"><div class="avatar" style="background:${colorFor(r.person.id)}">${esc(initials(r.person.name))}</div><div style="flex:1;min-width:0"><div class="pname">${medal?medal+" ":""}${esc(r.person.name)}</div>${chips}</div><div class="tk-price" style="font-size:16px">${r.count}</div></div>`;
+  }).join("");
+  return head+`<div class="people-list">${list}</div>`;
+}
+function renderDetail(){
+  const root=document.getElementById("detailRoot");
+  const prevScroll=root.querySelector(".detail")?.scrollTop||0;
+  const active=document.activeElement;
+  const focusId=(active&&root.contains(active)&&active.id)?active.id:null;
+  let selStart=null;
+  if(focusId){ try{ selStart=active.selectionStart; }catch(e){} }
+  if(!openPartyId){ root.innerHTML=""; return; }
+  const p=state.parties.find(x=>x.id===openPartyId);
+  if(!p){ openPartyId=null; root.innerHTML=""; return; }
+  const st=partyStats(p), d=fmtDate(p.date);
+  const myStatus=me?(p.attendance||{})[me]||"":"";
+  const myStatusPanel=`<div class="panel"><h3>Your status</h3>${me?`<div class="sub">Let the crew know if you're in.</div><div class="seg" data-person="${me}" style="margin-top:10px;width:fit-content"><button data-set="going" ${myStatus==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myStatus==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myStatus==="no"?'data-on="no"':''}>Can't</button></div>`:`<div class="sub">Pick who you are (top right, "I'm ___") to set your status.</div>`}</div>`;
+  function rosterGroup(label,cls,people){
+    if(!people.length) return "";
+    const rows=people.map(person=>{
+      const held=heldBy(p,person.id), sp=sparesBy(p,person.id);
+      const ticketInfo=held?`<span class="tk-badge held" title="Tickets they have">🎟 ${held}</span>`:sp?`<span class="tk-badge spare" title="Spare tickets they're holding">${sp} spare</span>`:`<span class="tk-badge none">no ticket</span>`;
+      return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(person.id)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(person.name))}</div><span class="pname">${esc(person.name)}</span></div>${ticketInfo}</div>`;
+    }).join("");
+    return `<div class="roster-group-label ${cls}">${label} (${people.length})</div>${rows}`;
+  }
+  const rosterGoing=[],rosterMaybe=[],rosterCant=[],rosterNone=[];
+  sortedPeople().forEach(person=>{
+    const s=(p.attendance||{})[person.id]||"";
+    (s==="going"?rosterGoing:s==="maybe"?rosterMaybe:s==="no"?rosterCant:rosterNone).push(person);
+  });
+  const rosterRows=state.people.length
+    ?rosterGroup("✓ Going","go",rosterGoing)+rosterGroup("? Maybe","mb",rosterMaybe)+rosterGroup("✕ Can't","cant",rosterCant)+rosterGroup("No response","none",rosterNone)
+    :`<p class="sub">Add people in the Crew tab first.</p>`;
+  const rosterPanel=attendanceExpanded?`<div class="panel"><h3>Who's coming</h3><div class="sub">Status and tickets for everyone in the crew.</div><div style="margin-top:6px">${rosterRows}</div></div>`:"";
+  const pph=p.prepartyHosts||[];
+  const ppa=p.prepartyAttendance||{};
+  const ppGoing=Object.values(ppa).filter(v=>v==="going").length;
+  const ppMaybe=Object.values(ppa).filter(v=>v==="maybe").length;
+  const meIsHost=me&&pph.includes(me);
+  const hostLine=pph.length?`Hosted by <b>${pph.map(id=>esc(personName(id))).join(", ")}</b>. ${ppGoing} going, ${ppMaybe} maybe.`:"No one's offered to host a pre-party yet.";
+  const prepAttRows=pph.length?state.people.map(person=>{
+    const cur=ppa[person.id]||"";
+    return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(person.id)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(person.name))}</div><span class="pname">${esc(person.name)}</span>${pph.includes(person.id)?'<span class="tk-badge held" title="Hosting the pre-party">🏠 host</span>':''}</div><div class="seg" data-preperson="${person.id}"><button data-set="going" ${cur==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${cur==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${cur==="no"?'data-on="no"':''}>Can't</button></div></div>`;
+  }).join(""):"";
+  const prepartyPanel=`<div class="panel"><h3>Pre-party 🏠</h3><div class="sub">${hostLine}</div><button class="btn sm ${meIsHost?'ghost':'accent'}" id="togglePrepartyHost">${meIsHost?"I'm no longer hosting":"🏠 I'll host it"}</button>${pph.length?`<div class="people-list" style="margin-top:14px">${prepAttRows}</div>`:""}</div>`;
+  const tickets=(p.tickets||[]);
+  const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
+  const totalSpent=tickets.reduce((s,t)=>s+(Number(t.price)||0),0);
+  const buyerOrder=[]; const byBuyer=new Map();
+  tickets.forEach(t=>{ if(!byBuyer.has(t.buyerId)){ byBuyer.set(t.buyerId,[]); buyerOrder.push(t.buyerId); } byBuyer.get(t.buyerId).push(t); });
+  const tkItems=tickets.length?buyerOrder.map(buyerId=>{
+    const tks=byBuyer.get(buyerId);
+    const total=tks.reduce((s,t)=>s+(Number(t.price)||0),0);
+    const chips=tks.map(t=>{
+      const price=(t.price!=null&&t.price!=="")?` · ${money(t.price)}`:"";
+      const opts=`<option value="">a spare</option>`+sortedPeople().map(pp=>`<option value="${pp.id}" ${t.holderId===pp.id?"selected":""}>${esc(pp.name)}</option>`).join("");
+      return `<span class="tk-chip${t.holderId?"":" spare"}"><select class="tk-claim" data-ticket="${t.id}" title="Assign or claim this ticket">${opts}</select>${price}<button type="button" data-delticket="${t.id}" title="Remove">✕</button></span>`;
+    }).join("");
+    return `<div class="tk-item" style="flex-direction:column;align-items:stretch;gap:8px"><div style="display:flex;align-items:center;gap:12px"><span class="arrow">🎟</span><span><b>${esc(personName(buyerId))}</b> bought ${tks.length} ticket${tks.length>1?"s":""}</span><span style="flex:1"></span>${total>0?`<span class="tk-price">${money(total)}</span>`:""}</div><div class="tk-chips" style="padding-left:34px">${chips}</div></div>`;
+  }).join(""):`<p class="sub" style="margin-bottom:0">No tickets logged yet.</p>`;
+  const buyerSummary=tickets.length?buyerOrder.map(buyerId=>{
+    const tks=byBuyer.get(buyerId);
+    const forWho=tks.map(t=>t.holderId?esc(personName(t.holderId)):"a spare").join(", ");
+    return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(buyerId)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(personName(buyerId)))}</div><span class="pname">${esc(personName(buyerId))}</span></div><span class="sub" style="margin:0;text-align:right">for ${forWho}</span></div>`;
+  }).join(""):`<p class="sub">No tickets bought yet.</p>`;
+  const unclaimedTickets=tickets.filter(t=>!t.holderId);
+  const unclaimedList=unclaimedTickets.length?unclaimedTickets.map(t=>{
+    const price=(t.price!=null&&t.price!=="")?` · ${money(t.price)}`:"";
+    const opts=`<option value="">unclaimed</option>`+sortedPeople().map(pp=>`<option value="${pp.id}">${esc(pp.name)}</option>`).join("");
+    return `<div class="att-row"><div class="who"><span class="pname">🎟 from ${esc(personName(t.buyerId))}${price}</span></div><select class="tk-claim" data-ticket="${t.id}" title="Claim this ticket">${opts}</select></div>`;
+  }).join(""):`<p class="sub" style="margin-bottom:0">No unclaimed tickets.</p>`;
+  const goingNoTicketPeople=sortedPeople().filter(person=>(p.attendance||{})[person.id]==="going"&&!st.covered.has(person.id));
+  const needsTicketList=goingNoTicketPeople.length?`<div class="chips">${goingNoTicketPeople.map(person=>`<span class="chip warn">${esc(person.name)}</span>`).join("")}</div>`:`<p class="sub" style="margin-bottom:0">Everyone going has a ticket! 🎉</p>`;
+  const ticketsPanel=ticketsExpanded?`<div class="panel"><h3>Tickets overview</h3><div class="sub">Who bought what, and who still needs one.</div><div style="margin-top:6px">${buyerSummary}</div><div class="roster-group-label" style="margin-top:14px">🎟 Unclaimed tickets (${unclaimedTickets.length})</div>${unclaimedList}<div class="roster-group-label">⚠ Going, no ticket (${goingNoTicketPeople.length})</div>${needsTicketList}</div>`:"";
+  const peopleOpts=state.people.map(pp=>`<option value="${pp.id}">${esc(pp.name)}</option>`).join("");
+  const goingPct=state.people.length?st.going/state.people.length:0;
+  let flameCount=0;
+  if(st.going>=1) flameCount=1;
+  if(goingPct>=0.33) flameCount=2;
+  if(goingPct>=0.66) flameCount=3;
+  const flames=flameCount?" "+"🔥".repeat(flameCount):"";
+  const headlinerMeta=(p.headliners||[]).map(h=>`<span>🎤 ${esc(h)} <a href="https://open.spotify.com/search/${encodeURIComponent(h)}" target="_blank" rel="noopener" title="Listen on Spotify" style="color:inherit;text-decoration:none">🎧</a></span>`).join("");
+  const logisticsPanel=`<div class="panel"><h3>Notes</h3><div class="sub">Meeting point, carpool, anything people need to know.</div><textarea id="logisticsText" rows="4" placeholder="e.g. Meet at the station at 8pm, park behind the venue…">${esc(p.notes||"")}</textarea></div>`;
+  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button><button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button></div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div><div class="footer-actions"><button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
+  const buyerSel=document.getElementById("tkBuyer");
+  if(buyerSel&&me) buyerSel.value=me;
+  renderDraft();
+  wireDetail();
+  justOpenedParty=false;
+  const detailEl=root.querySelector(".detail");
+  if(detailEl) detailEl.scrollTop=prevScroll;
+  if(focusId){
+    const el=document.getElementById(focusId);
+    if(el){ el.focus(); if(selStart!=null){ try{ el.setSelectionRange(selStart,selStart); }catch(e){} } }
+  }
+}
+function renderDraft(){
+  const chips=document.getElementById("tkChips");
+  if(chips){
+    chips.innerHTML=draftHolders.map(id=>`<span class="tk-chip">${esc(personName(id))}<button type="button" data-unchip="${id}" title="Remove">✕</button></span>`).join("");
+    chips.querySelectorAll("[data-unchip]").forEach(b=>b.onclick=()=>{ draftHolders=draftHolders.filter(x=>x!==b.dataset.unchip); renderDraft(); });
+  }
+  const sp=document.getElementById("tkSpares");
+  if(sp) sp.textContent=draftSpares;
+}
+/* ---------- wiring ---------- */
+function wireView(){
+  const np=document.getElementById("newParty")||document.getElementById("newPartyEmpty");
+  if(np) np.onclick=openNewPartyModal;
+  document.querySelectorAll("[data-open]").forEach(el=>el.onclick=()=>openParty(el.dataset.open));
+  const addP=document.getElementById("addPerson");
+  if(addP){
+    const inp=document.getElementById("newPersonName");
+    const doAdd=async()=>{const name=inp.value.trim();if(!name)return;inp.value="";await addPerson(name);document.getElementById("newPersonName")?.focus();};
+    addP.onclick=doAdd; inp.onkeydown=e=>{if(e.key==="Enter")doAdd();};
+  }
+  document.querySelectorAll("[data-delperson]").forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.delperson;
+    if(!confirm(`Remove ${personName(id)} from the crew? This also clears their party statuses and tickets.`))return;
+    await delPerson(id);
+  });
+  document.querySelectorAll("[data-editperson]").forEach(b=>b.onclick=()=>{
+    openRenameModal(b.dataset.editperson,personName(b.dataset.editperson));
+  });
+  const notifBtn=document.getElementById("enableNotifs");
+  if(notifBtn) notifBtn.onclick=enablePushNotifications;
+}
+function wireDetail(){
+  document.getElementById("backBtn").onclick=()=>{openPartyId=null;render();};
+  document.querySelectorAll(".seg").forEach(seg=>{
+    const pid=seg.dataset.person, ppid=seg.dataset.preperson;
+    seg.querySelectorAll("button").forEach(btn=>btn.onclick=()=>{
+      if(pid) setAtt(openPartyId,pid,btn.dataset.set);
+      else if(ppid) setPrepartyAtt(openPartyId,ppid,btn.dataset.set);
+    });
+  });
+  const attToggle=document.getElementById("attendanceToggle");
+  if(attToggle) attToggle.onclick=()=>{ attendanceExpanded=!attendanceExpanded; ticketsExpanded=false; renderDetail(); };
+  const tkToggle=document.getElementById("ticketsToggle");
+  if(tkToggle) tkToggle.onclick=()=>{ ticketsExpanded=!ticketsExpanded; attendanceExpanded=false; renderDetail(); };
+  const hostBtn=document.getElementById("togglePrepartyHost");
+  if(hostBtn) hostBtn.onclick=()=>{
+    if(!me){ alert("Pick who you are first (top right, \"I'm ___\")."); return; }
+    togglePrepartyHost(openPartyId,me);
+  };
+  document.getElementById("editParty").onclick=()=>{
+    const p=state.parties.find(x=>x.id===openPartyId);
+    openEditPartyModal(p);
+  };
+  const pick=document.getElementById("tkHolderPick");
+  if(pick) pick.onchange=()=>{ const v=pick.value; if(v&&!draftHolders.includes(v)) draftHolders.push(v); pick.value=""; renderDraft(); };
+  const sMinus=document.getElementById("tkSpareMinus"), sPlus=document.getElementById("tkSparePlus");
+  if(sMinus) sMinus.onclick=()=>{ draftSpares=Math.max(0,draftSpares-1); renderDraft(); };
+  if(sPlus) sPlus.onclick=()=>{ draftSpares=draftSpares+1; renderDraft(); };
+  const addTk=document.getElementById("addTicket");
+  if(addTk) addTk.onclick=()=>{
+    const b=document.getElementById("tkBuyer").value;
+    const pv=document.getElementById("tkPrice").value;
+    const price=pv===""?null:parseFloat(pv);
+    const holders=[...draftHolders], spares=draftSpares;
+    if(!b || (holders.length===0 && spares===0)) return;
+    draftHolders=[]; draftSpares=0;
+    addTickets(openPartyId,b,holders,spares,price);
+  };
+  document.querySelectorAll("[data-delticket]").forEach(b=>b.onclick=()=>delTicket(b.dataset.delticket));
+  document.querySelectorAll(".tk-claim").forEach(sel=>sel.onchange=()=>claimTicket(sel.dataset.ticket,sel.value||null));
+  const logisticsEl=document.getElementById("logisticsText");
+  if(logisticsEl) logisticsEl.onblur=()=>{
+    const p=state.parties.find(x=>x.id===openPartyId);
+    if(p&&logisticsEl.value!==(p.notes||"")) updateLogistics(openPartyId,logisticsEl.value);
+  };
+  document.getElementById("exportGuests").onclick=()=>exportGuestList(openPartyId);
+  document.getElementById("deleteParty").onclick=async()=>{
+    const p=state.parties.find(x=>x.id===openPartyId);
+    if(!confirm(`Delete "${p.name}"? This can't be undone.`))return;
+    const id=openPartyId; openPartyId=null; await delParty(id);
+  };
+}
+function headlinerFieldsHtml(vals){
+  vals=vals||[];
+  return `<div class="field"><label>Headliners <span style="font-weight:400">(optional, up to 3)</span></label><input id="mHeadliner1" placeholder="Headliner 1" maxlength="60" value="${esc(vals[0]||"")}" style="margin-bottom:8px"><input id="mHeadliner2" placeholder="Headliner 2" maxlength="60" value="${esc(vals[1]||"")}" style="margin-bottom:8px"><input id="mHeadliner3" placeholder="Headliner 3" maxlength="60" value="${esc(vals[2]||"")}"></div>`;
+}
+function collectHeadliners(){
+  return [1,2,3].map(i=>document.getElementById("mHeadliner"+i).value.trim()).filter(Boolean);
+}
+function openNewPartyModal(){
+  const root=document.getElementById("modalRoot");
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>New party 🎉</h3><div class="field"><label>Name</label><input id="mName" placeholder="e.g. Tomorrowland, Lisa's birthday…" maxlength="60"></div><div class="field"><label>Date</label><input id="mDate" type="date"></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80"></div>${headlinerFieldsHtml()}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mCreate">Create party</button></div></div></div>`;
+  const close=()=>{root.innerHTML="";};
+  document.getElementById("mCancel").onclick=close;
+  document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
+  const nameInp=document.getElementById("mName"); nameInp.focus();
+  document.getElementById("mCreate").onclick=async()=>{
+    const name=nameInp.value.trim(); if(!name){nameInp.focus();return;}
+    const id=await addParty({name,date:document.getElementById("mDate").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
+    close(); if(id){openParty(id);}
+  };
+  nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mCreate").click();};
+}
+function openRenameModal(id,current){
+  const root=document.getElementById("modalRoot");
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Rename</h3><div class="field"><label>Name</label><input id="mNameEdit" maxlength="40" value="${esc(current||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save</button></div></div></div>`;
+  const close=()=>{root.innerHTML="";};
+  document.getElementById("mCancel").onclick=close;
+  document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
+  const inp=document.getElementById("mNameEdit"); inp.focus(); inp.select();
+  document.getElementById("mSave").onclick=async()=>{
+    const n=inp.value.trim(); if(!n){inp.focus();return;}
+    await renamePerson(id,n);
+    close();
+  };
+  inp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
+}
+function openEditPartyModal(p){
+  const root=document.getElementById("modalRoot");
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Edit party ✎</h3><div class="field"><label>Name</label><input id="mName" maxlength="60" value="${esc(p.name||"")}"></div><div class="field"><label>Date</label><input id="mDate" type="date" value="${p.date||""}"></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80" value="${esc(p.location||"")}"></div>${headlinerFieldsHtml(p.headliners)}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40" value="${esc(p.genre||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save changes</button></div></div></div>`;
+  const close=()=>{root.innerHTML="";};
+  document.getElementById("mCancel").onclick=close;
+  document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
+  const nameInp=document.getElementById("mName"); nameInp.focus();
+  document.getElementById("mSave").onclick=async()=>{
+    const name=nameInp.value.trim(); if(!name){nameInp.focus();return;}
+    await updateParty(p.id,{name,date:document.getElementById("mDate").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
+    close();
+  };
+  nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
+}
+/* ---------- push notifications ---------- */
+function notifLabel(){
+  if(!("Notification" in window)||!("serviceWorker" in navigator)||!("PushManager" in window)) return null;
+  if(Notification.permission==="granted") return "🔔 Notifications on";
+  if(Notification.permission==="denied") return "🔕 Blocked — check your browser's site settings";
+  return "🔔 Enable notifications";
+}
+function urlBase64ToUint8Array(base64String){
+  const padding="=".repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,"+").replace(/_/g,"/");
+  const raw=atob(base64);
+  const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+async function enablePushNotifications(){
+  if(!notifLabel()){ alert("Push notifications aren't supported in this browser."); return; }
+  if(!window.VAPID_PUBLIC_KEY){ alert("Notifications aren't configured yet (missing VAPID_PUBLIC_KEY in config.js)."); return; }
+  const perm=await Notification.requestPermission();
+  if(perm!=="granted"){ render(); return; }
+  const reg=await navigator.serviceWorker.ready;
+  let sub=await reg.pushManager.getSubscription();
+  if(!sub){
+    sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlBase64ToUint8Array(window.VAPID_PUBLIC_KEY) });
+  }
+  const json=sub.toJSON();
+  await supa.from("push_subscriptions").upsert({
+    endpoint:json.endpoint, p256dh:json.keys.p256dh, auth:json.keys.auth, person_id:me||null
+  },{onConflict:"endpoint"});
+  render();
+}
+/* ---------- topbar ---------- */
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{currentTab=t.dataset.tab;render();});
+document.getElementById("meSelect").onchange=e=>{me=e.target.value||null; if(me)localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me"); render();};
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElementById("modalRoot").innerHTML)document.getElementById("modalRoot").innerHTML="";else if(openPartyId){openPartyId=null;render();}}});
+
+/* ---------- boot ---------- */
+(async function(){
+  if(!configured){
+    document.getElementById("view").innerHTML=`<div class="setup"><h1>Almost there 🎟</h1><p>This app reads its database keys from a file called <code>config.js</code>. Open that file, paste your Supabase <code>Project URL</code> and key between the quotes, save, and re-deploy the folder.</p><p>You only ever edit <code>config.js</code> — the app file stays as-is.</p></div>`;
+    return;
+  }
+  await refresh();
+  // Live updates: refresh when anyone in the group changes something
+  supa.channel("guestlist").on("postgres_changes",{event:"*",schema:"public"},debounce(refresh,250)).subscribe();
+  // Safety net: refresh when you return to the tab
+  window.addEventListener("focus",debounce(refresh,300));
+})();
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js"));
+}
+</script>
+</body>
+</html>
