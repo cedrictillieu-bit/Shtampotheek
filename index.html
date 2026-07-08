@@ -48,6 +48,11 @@
   .banner.ios-hint{background:rgba(46,134,222,.1);border:1px solid rgba(46,134,222,.35);color:#1B5FA8;display:flex;align-items:center;justify-content:space-between;gap:10px}
   .banner.ios-hint button{color:inherit;font-weight:700;flex:0 0 auto;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center}
   .banner.ios-hint button:hover{background:rgba(46,134,222,.18)}
+  .banner.notif-hint{background:rgba(255,74,43,.09);border:1px solid rgba(255,74,43,.3);color:#a3271b;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .banner.notif-hint .nh-actions{display:flex;gap:8px;flex:0 0 auto;align-items:center}
+  .banner.notif-hint .nh-enable{background:var(--vermilion);color:#fff;font-weight:700;padding:5px 13px;border-radius:999px;font-size:13px}
+  .banner.notif-hint .nh-dismiss{color:inherit;font-weight:700;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center}
+  .banner.notif-hint .nh-dismiss:hover{background:rgba(255,74,43,.15)}
   .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:32px 0 18px;flex-wrap:wrap}
   .sec-head h2{font-family:'Bricolage Grotesque';font-weight:800;font-size:30px;letter-spacing:-.03em;line-height:1}
   .sec-head p{color:var(--slate);font-size:14px;margin-top:6px}
@@ -126,7 +131,7 @@
   .tk-form{display:flex;flex-direction:column;gap:11px;align-items:stretch;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
   .tk-row{display:flex;align-items:center;gap:10px}
   .tk-row .lbl{flex:0 0 78px;font-size:13px;color:var(--slate);font-weight:600}
-  .tk-form select{flex:1;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px;font-weight:500}
+  .tk-form select{flex:1;min-width:0;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px;font-weight:500}
   .tk-form .lbl{font-size:13px;color:var(--slate);font-weight:600}
   .tk-chips{display:flex;flex-wrap:wrap;gap:6px;padding-left:88px}
   .tk-chips:empty{display:none}
@@ -142,7 +147,7 @@
   .stepper button:hover{border-color:var(--vermilion);color:var(--vermilion)}
   .stepper>span{min-width:22px;text-align:center;font-weight:700;font-family:'Space Mono'}
   .stepper-hint{font-size:12px;color:var(--slate);font-weight:500}
-  .tk-price-input{flex:1;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px}
+  .tk-price-input{flex:1;min-width:0;background:var(--paper);border:1px solid var(--line-strong);border-radius:9px;padding:9px 11px}
   .tk-price{font-family:'Space Mono';font-weight:700;font-size:13px;color:var(--vermilion);white-space:nowrap}
   .tk-total{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:14px;text-align:right}
   .tk-badge{font-family:'Space Mono';font-size:11px;font-weight:700;padding:3px 7px;border-radius:6px;white-space:nowrap;flex:0 0 auto}
@@ -154,6 +159,8 @@
   .roster-group-label.go{color:var(--jade)}
   .roster-group-label.mb{color:var(--amber)}
   .roster-group-label.cant{color:var(--slate)}
+  .name-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+  .name-pill{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
   .link-danger{color:var(--slate);font-size:13px;font-weight:600}
   .link-danger:hover{color:var(--vermilion)}
   .icon-x{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;color:var(--slate);font-size:16px}
@@ -201,6 +208,7 @@
   </div>
   <div id="storeBanner"></div>
   <div id="iosBanner"></div>
+  <div id="notifBanner"></div>
   <main class="wrap" id="view"></main>
   <div id="detailRoot"></div>
   <div id="modalRoot"></div>
@@ -231,8 +239,9 @@ let draftHolders = [];   // friends selected to receive a ticket in the current 
 let draftSpares = 0;     // number of unassigned/spare tickets in the current buy
 let attendanceExpanded = false;
 let ticketsExpanded = false;
+let prepartyExpanded = false;
 let justOpenedParty = false;
-function openParty(id){ openPartyId=id; draftHolders=[]; draftSpares=0; attendanceExpanded=false; ticketsExpanded=false; justOpenedParty=true; render(); }
+function openParty(id){ openPartyId=id; draftHolders=[]; draftSpares=0; attendanceExpanded=false; ticketsExpanded=false; prepartyExpanded=false; justOpenedParty=true; render(); }
 
 /* ---------- utils ---------- */
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id"+Math.random().toString(36).slice(2));
@@ -246,6 +255,14 @@ function fmtDate(d){
   return {day:dt.getDate(),mon:dt.toLocaleString("en-US",{month:"short"}).toUpperCase(),
     dow:dt.toLocaleString("en-US",{weekday:"short"}).toUpperCase(),
     full:dt.toLocaleString("en-US",{weekday:"long",month:"long",day:"numeric"})};
+}
+function fmtTime(t){
+  if(!t) return null;
+  const [h,m] = t.split(":").map(Number);
+  if(isNaN(h)||isNaN(m)) return null;
+  const period = h>=12?"PM":"AM";
+  const h12 = h%12===0?12:h%12;
+  return `${h12}:${String(m).padStart(2,"0")} ${period}`;
 }
 function partyStats(p){
   const att=p.attendance||{};
@@ -365,15 +382,57 @@ async function delPerson(id){
 }
 async function addParty(o){
   const {data} = await supa.from("parties")
-    .insert({name:o.name, date:o.date||null, location:o.location||null, genre:o.genre||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null}).select().single();
+    .insert({name:o.name, date:o.date||null, start_time:o.startTime||null, location:o.location||null, genre:o.genre||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null}).select().single();
   await refresh(); return data&&data.id;
 }
 async function delParty(id){ await supa.from("parties").delete().eq("id",id); await refresh(); }
 async function updateParty(partyId,o){
-  await supa.from("parties").update({name:o.name, date:o.date||null, location:o.location||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null, genre:o.genre||null}).eq("id",partyId);
+  await supa.from("parties").update({name:o.name, date:o.date||null, start_time:o.startTime||null, location:o.location||null, headliners:(o.headliners&&o.headliners.length)?o.headliners:null, genre:o.genre||null}).eq("id",partyId);
   await refresh();
 }
 async function updateLogistics(partyId,notes){ await supa.from("parties").update({notes:notes||null}).eq("id",partyId); await refresh(); }
+function addToCalendar(partyId){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p||!p.date) return;
+  const icsEsc=s=>(s||"").replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\n/g,"\\n");
+  const pad=n=>String(n).padStart(2,"0");
+  let dtStart,dtEnd,allDay=false;
+  if(p.start_time){
+    const [h,mi]=p.start_time.split(":").map(Number);
+    const start=new Date(p.date+"T"+pad(h)+":"+pad(mi)+":00");
+    const end=new Date(start.getTime()+4*3600000); // default 4h duration
+    const fmt=dt=>`${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+    dtStart=`DTSTART:${fmt(start)}`;
+    dtEnd=`DTEND:${fmt(end)}`;
+  }else{
+    allDay=true;
+    const d=new Date(p.date+"T00:00:00");
+    const next=new Date(d.getTime()+86400000);
+    const fmtD=dt=>`${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}`;
+    dtStart=`DTSTART;VALUE=DATE:${fmtD(d)}`;
+    dtEnd=`DTEND;VALUE=DATE:${fmtD(next)}`;
+  }
+  const now=new Date();
+  const stamp=`${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+  const descParts=[];
+  if(p.headliners&&p.headliners.length) descParts.push("Headliners: "+p.headliners.join(", "));
+  if(p.genre) descParts.push("Genre: "+p.genre);
+  if(p.notes) descParts.push(p.notes);
+  const lines=[
+    "BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Shtamp//Party//EN","BEGIN:VEVENT",
+    `UID:${partyId}@shtamp`,`DTSTAMP:${stamp}`,dtStart,dtEnd,
+    `SUMMARY:${icsEsc(p.name)}`,
+    p.location?`LOCATION:${icsEsc(p.location)}`:"",
+    descParts.length?`DESCRIPTION:${icsEsc(descParts.join("\n"))}`:"",
+    "END:VEVENT","END:VCALENDAR"
+  ].filter(Boolean);
+  const blob=new Blob([lines.join("\r\n")],{type:"text/calendar"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=`${p.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.ics`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
 function exportGuestList(partyId){
   const p=state.parties.find(x=>x.id===partyId);
   if(!p) return;
@@ -383,7 +442,7 @@ function exportGuestList(partyId){
   const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
   const d=fmtDate(p.date);
   const lines=[`Guest list — ${p.name}`];
-  if(d) lines.push(d.full); else if(p.date) lines.push(p.date); else lines.push("Date: TBD");
+  if(d) lines.push(d.full+(p.start_time?` at ${fmtTime(p.start_time)}`:"")); else if(p.date) lines.push(p.date); else lines.push("Date: TBD");
   if(p.location) lines.push(`Location: ${p.location}`);
   if(p.headliners&&p.headliners.length) lines.push(`Headliners: ${p.headliners.join(", ")}`);
   if(p.genre) lines.push(`Genre: ${p.genre}`);
@@ -521,7 +580,7 @@ function partyCard(p){
   const stub=d?`<div class="stub"><div class="day">${d.day}</div><div class="mon">${d.mon}</div><div class="dow">${d.dow}</div></div>`
     :`<div class="stub"><div class="mon" style="writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.2em">TBD</div></div>`;
   const chips=[`<span class="chip go">✓ ${st.going} going</span>`,st.maybe?`<span class="chip mb">? ${st.maybe} maybe</span>`:"",`<span class="chip tk">🎟 ${st.tickets} tickets</span>`,st.goingNoTicket?`<span class="chip warn">${st.goingNoTicket} need one</span>`:""].filter(Boolean).join("");
-  return `<button class="ticket" data-open="${p.id}">${stub}<div class="perf"></div><div class="body"><div class="name">${esc(p.name)}</div>${p.location?`<div class="loc">📍 ${esc(p.location)}</div>`:""}${(p.headliners&&p.headliners.length)?`<div class="loc">🎤 ${esc(p.headliners.join(", "))}</div>`:""}${p.genre?`<div class="loc">🎵 ${esc(p.genre)}</div>`:""}<div class="chips">${chips}</div></div></button>`;
+  return `<button class="ticket" data-open="${p.id}">${stub}<div class="perf"></div><div class="body"><div class="name">${esc(p.name)}</div>${p.start_time?`<div class="loc">🕐 ${fmtTime(p.start_time)}</div>`:""}${p.location?`<div class="loc">📍 ${esc(p.location)}</div>`:""}${(p.headliners&&p.headliners.length)?`<div class="loc">🎤 ${esc(p.headliners.join(", "))}</div>`:""}${p.genre?`<div class="loc">🎵 ${esc(p.genre)}</div>`:""}<div class="chips">${chips}</div></div></button>`;
 }
 function archiveView(){
   const parties=archivedParties();
@@ -571,12 +630,11 @@ function renderDetail(){
   const myStatusPanel=`<div class="panel"><h3>Your status</h3>${me?`<div class="sub">Let the crew know if you're in.</div><div class="seg" data-person="${me}" style="margin-top:10px;width:fit-content"><button data-set="going" ${myStatus==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myStatus==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myStatus==="no"?'data-on="no"':''}>Can't</button></div>`:`<div class="sub">Pick who you are (top right, "I'm ___") to set your status.</div>`}</div>`;
   function rosterGroup(label,cls,people){
     if(!people.length) return "";
-    const rows=people.map(person=>{
-      const held=heldBy(p,person.id), sp=sparesBy(p,person.id);
-      const ticketInfo=held?`<span class="tk-badge held" title="Tickets they have">🎟 ${held}</span>`:sp?`<span class="tk-badge spare" title="Spare tickets they're holding">${sp} spare</span>`:`<span class="tk-badge none">no ticket</span>`;
-      return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(person.id)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(person.name))}</div><span class="pname">${esc(person.name)}</span></div>${ticketInfo}</div>`;
+    const pills=people.map(person=>{
+      const hasTicket=st.covered.has(person.id);
+      return `<span class="name-pill">${esc(person.name)}${hasTicket?' <span title="Has a ticket">🎟</span>':''}</span>`;
     }).join("");
-    return `<div class="roster-group-label ${cls}">${label} (${people.length})</div>${rows}`;
+    return `<div class="roster-group-label ${cls}">${label} (${people.length})</div><div class="name-pills">${pills}</div>`;
   }
   const rosterGoing=[],rosterMaybe=[],rosterCant=[],rosterNone=[];
   sortedPeople().forEach(person=>{
@@ -591,13 +649,29 @@ function renderDetail(){
   const ppa=p.prepartyAttendance||{};
   const ppGoing=Object.values(ppa).filter(v=>v==="going").length;
   const ppMaybe=Object.values(ppa).filter(v=>v==="maybe").length;
+  const ppCant=Object.values(ppa).filter(v=>v==="no").length;
   const meIsHost=me&&pph.includes(me);
-  const hostLine=pph.length?`Hosted by <b>${pph.map(id=>esc(personName(id))).join(", ")}</b>. ${ppGoing} going, ${ppMaybe} maybe.`:"No one's offered to host a pre-party yet.";
-  const prepAttRows=pph.length?state.people.map(person=>{
-    const cur=ppa[person.id]||"";
-    return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(person.id)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(person.name))}</div><span class="pname">${esc(person.name)}</span>${pph.includes(person.id)?'<span class="tk-badge held" title="Hosting the pre-party">🏠 host</span>':''}</div><div class="seg" data-preperson="${person.id}"><button data-set="going" ${cur==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${cur==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${cur==="no"?'data-on="no"':''}>Can't</button></div></div>`;
-  }).join(""):"";
-  const prepartyPanel=`<div class="panel"><h3>Pre-party 🏠</h3><div class="sub">${hostLine}</div><button class="btn sm ${meIsHost?'ghost':'accent'}" id="togglePrepartyHost">${meIsHost?"I'm no longer hosting":"🏠 I'll host it"}</button>${pph.length?`<div class="people-list" style="margin-top:14px">${prepAttRows}</div>`:""}</div>`;
+  const hostLine=pph.length?`Hosted by <b>${pph.map(id=>esc(personName(id))).join(", ")}</b>.`:"No one's offered to host a pre-party yet.";
+  const myPp=me?ppa[me]||"":"";
+  const prepMyStatus=me
+    ?`<div class="sub" style="margin-top:12px">Your pre-party status:</div><div class="seg" data-preperson="${me}" style="margin-top:8px;width:fit-content"><button data-set="going" ${myPp==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myPp==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myPp==="no"?'data-on="no"':''}>Can't</button></div>`
+    :`<div class="sub" style="margin-top:12px">Pick who you are (top right, "I'm ___") to set your pre-party status.</div>`;
+  const prepSummary=`<button type="button" id="prepartyToggle" style="display:flex;align-items:center;gap:8px;width:100%;margin-top:14px;padding:10px 12px;background:var(--paper);border:1px solid var(--line);border-radius:10px;flex-wrap:wrap"><span class="chip go">✓ ${ppGoing} going</span>${ppMaybe?`<span class="chip mb">? ${ppMaybe} maybe</span>`:""}${ppCant?`<span class="chip warn">${ppCant} can't</span>`:""}<span style="flex:1"></span><span class="sub" style="margin:0">${prepartyExpanded?"▲ hide":"▾ who"}</span></button>`;
+  function prepGroup(label,cls,ids){
+    if(!ids.length) return "";
+    const pills=ids.map(id=>`<span class="name-pill">${esc(personName(id))}${pph.includes(id)?' <span title="Hosting the pre-party">🏠</span>':''}</span>`).join("");
+    return `<div class="roster-group-label ${cls}">${label} (${ids.length})</div><div class="name-pills">${pills}</div>`;
+  }
+  const ppGoingIds=[],ppMaybeIds=[],ppCantIds=[];
+  sortedPeople().forEach(person=>{
+    const s=ppa[person.id]||"";
+    if(s==="going") ppGoingIds.push(person.id);
+    else if(s==="maybe") ppMaybeIds.push(person.id);
+    else if(s==="no") ppCantIds.push(person.id);
+  });
+  const prepRosterRows=prepGroup("✓ Going","go",ppGoingIds)+prepGroup("? Maybe","mb",ppMaybeIds)+prepGroup("✕ Can't","cant",ppCantIds);
+  const prepExpanded=prepartyExpanded?`<div style="margin-top:10px">${prepRosterRows||'<p class="sub" style="margin-bottom:0">No responses yet.</p>'}</div>`:"";
+  const prepartyPanel=`<div class="panel"><h3>Pre-party 🏠</h3><div class="sub">${hostLine}</div><button class="btn sm ${meIsHost?'ghost':'accent'}" id="togglePrepartyHost" style="margin-top:10px">${meIsHost?"I'm no longer hosting":"🏠 I'll host it"}</button>${pph.length?`${prepMyStatus}${prepSummary}${prepExpanded}`:""}</div>`;
   const tickets=(p.tickets||[]);
   const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
   const totalSpent=tickets.reduce((s,t)=>s+(Number(t.price)||0),0);
@@ -606,27 +680,49 @@ function renderDetail(){
   const tkItems=tickets.length?buyerOrder.map(buyerId=>{
     const tks=byBuyer.get(buyerId);
     const total=tks.reduce((s,t)=>s+(Number(t.price)||0),0);
-    const chips=tks.map(t=>{
+    const claimedChips=tks.filter(t=>t.holderId).map(t=>{
       const price=(t.price!=null&&t.price!=="")?` · ${money(t.price)}`:"";
       const opts=`<option value="">a spare</option>`+sortedPeople().map(pp=>`<option value="${pp.id}" ${t.holderId===pp.id?"selected":""}>${esc(pp.name)}</option>`).join("");
-      return `<span class="tk-chip${t.holderId?"":" spare"}"><select class="tk-claim" data-ticket="${t.id}" title="Assign or claim this ticket">${opts}</select>${price}<button type="button" data-delticket="${t.id}" title="Remove">✕</button></span>`;
+      return `<span class="tk-chip"><select class="tk-claim" data-ticket="${t.id}" title="Assign or reassign this ticket">${opts}</select>${price}<button type="button" data-delticket="${t.id}" title="Remove">✕</button></span>`;
     }).join("");
+    const spareTks=tks.filter(t=>!t.holderId);
+    const spareGroups=[]; const spareByPrice=new Map();
+    spareTks.forEach(t=>{ const k=(t.price==null||t.price===""?"":t.price); if(!spareByPrice.has(k)){ spareByPrice.set(k,[]); spareGroups.push(k); } spareByPrice.get(k).push(t); });
+    const spareChips=spareGroups.map(k=>{
+      const grp=spareByPrice.get(k); const t=grp[0];
+      const price=(t.price!=null&&t.price!=="")?` · ${money(t.price)}`:"";
+      const qty=grp.length>1?`<b style="margin-right:3px">${grp.length}×</b>`:"";
+      const opts=`<option value="">${grp.length>1?"spare":"a spare"}</option>`+sortedPeople().map(pp=>`<option value="${pp.id}">${esc(pp.name)}</option>`).join("");
+      return `<span class="tk-chip spare">${qty}<select class="tk-claim" data-ticket="${t.id}" title="Assign or claim one of these">${opts}</select>${price}<button type="button" data-delticket="${t.id}" title="Remove one">✕</button></span>`;
+    }).join("");
+    const chips=claimedChips+spareChips;
     return `<div class="tk-item" style="flex-direction:column;align-items:stretch;gap:8px"><div style="display:flex;align-items:center;gap:12px"><span class="arrow">🎟</span><span><b>${esc(personName(buyerId))}</b> bought ${tks.length} ticket${tks.length>1?"s":""}</span><span style="flex:1"></span>${total>0?`<span class="tk-price">${money(total)}</span>`:""}</div><div class="tk-chips" style="padding-left:34px">${chips}</div></div>`;
   }).join(""):`<p class="sub" style="margin-bottom:0">No tickets logged yet.</p>`;
-  const buyerSummary=tickets.length?buyerOrder.map(buyerId=>{
-    const tks=byBuyer.get(buyerId);
-    const forWho=tks.map(t=>t.holderId?esc(personName(t.holderId)):"a spare").join(", ");
+  const claimedCount=tickets.filter(t=>t.holderId).length;
+  const claimedList=claimedCount?buyerOrder.map(buyerId=>{
+    const claimed=byBuyer.get(buyerId).filter(t=>t.holderId);
+    if(!claimed.length) return "";
+    const forWho=claimed.map(t=>esc(personName(t.holderId))).join(", ");
     return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(buyerId)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(personName(buyerId)))}</div><span class="pname">${esc(personName(buyerId))}</span></div><span class="sub" style="margin:0;text-align:right">for ${forWho}</span></div>`;
-  }).join(""):`<p class="sub">No tickets bought yet.</p>`;
+  }).join(""):`<p class="sub" style="margin-bottom:0">No tickets claimed yet.</p>`;
   const unclaimedTickets=tickets.filter(t=>!t.holderId);
-  const unclaimedList=unclaimedTickets.length?unclaimedTickets.map(t=>{
+  const unclaimedGroups=[]; const unclaimedByKey=new Map();
+  unclaimedTickets.forEach(t=>{
+    const key=t.buyerId+"|"+(t.price==null?"":t.price);
+    if(!unclaimedByKey.has(key)){ unclaimedByKey.set(key,[]); unclaimedGroups.push(key); }
+    unclaimedByKey.get(key).push(t);
+  });
+  const unclaimedList=unclaimedTickets.length?unclaimedGroups.map(key=>{
+    const grp=unclaimedByKey.get(key);
+    const t=grp[0];
     const price=(t.price!=null&&t.price!=="")?` · ${money(t.price)}`:"";
+    const qty=grp.length>1?`${grp.length}× spare `:"";
     const opts=`<option value="">unclaimed</option>`+sortedPeople().map(pp=>`<option value="${pp.id}">${esc(pp.name)}</option>`).join("");
-    return `<div class="att-row"><div class="who"><span class="pname">🎟 from ${esc(personName(t.buyerId))}${price}</span></div><select class="tk-claim" data-ticket="${t.id}" title="Claim this ticket">${opts}</select></div>`;
+    return `<div class="att-row"><div class="who"><span class="pname">🎟 ${qty}from ${esc(personName(t.buyerId))}${price}</span></div><select class="tk-claim" data-ticket="${t.id}" title="Claim one of these tickets">${opts}</select></div>`;
   }).join(""):`<p class="sub" style="margin-bottom:0">No unclaimed tickets.</p>`;
   const goingNoTicketPeople=sortedPeople().filter(person=>(p.attendance||{})[person.id]==="going"&&!st.covered.has(person.id));
   const needsTicketList=goingNoTicketPeople.length?`<div class="chips">${goingNoTicketPeople.map(person=>`<span class="chip warn">${esc(person.name)}</span>`).join("")}</div>`:`<p class="sub" style="margin-bottom:0">Everyone going has a ticket! 🎉</p>`;
-  const ticketsPanel=ticketsExpanded?`<div class="panel"><h3>Tickets overview</h3><div class="sub">Who bought what, and who still needs one.</div><div style="margin-top:6px">${buyerSummary}</div><div class="roster-group-label" style="margin-top:14px">🎟 Unclaimed tickets (${unclaimedTickets.length})</div>${unclaimedList}<div class="roster-group-label">⚠ Going, no ticket (${goingNoTicketPeople.length})</div>${needsTicketList}</div>`:"";
+  const ticketsPanel=ticketsExpanded?`<div class="panel"><h3>Tickets overview</h3><div class="sub">Who bought what, and who still needs one.</div><div class="roster-group-label" style="margin-top:6px">🎟 Claimed (${claimedCount})</div>${claimedList}<div class="roster-group-label">🎟 Unclaimed tickets (${unclaimedTickets.length})</div>${unclaimedList}<div class="roster-group-label">⚠ Going, no ticket (${goingNoTicketPeople.length})</div>${needsTicketList}</div>`:"";
   const peopleOpts=state.people.map(pp=>`<option value="${pp.id}">${esc(pp.name)}</option>`).join("");
   const goingPct=state.people.length?st.going/state.people.length:0;
   let flameCount=0;
@@ -636,7 +732,7 @@ function renderDetail(){
   const flames=flameCount?" "+"🔥".repeat(flameCount):"";
   const headlinerMeta=(p.headliners||[]).map(h=>`<span>🎤 ${esc(h)} <a href="https://open.spotify.com/search/${encodeURIComponent(h)}" target="_blank" rel="noopener" title="Listen on Spotify" style="color:inherit;text-decoration:none">🎧</a></span>`).join("");
   const logisticsPanel=`<div class="panel"><h3>Notes</h3><div class="sub">Meeting point, carpool, anything people need to know.</div><textarea id="logisticsText" rows="4" placeholder="e.g. Meet at the station at 8pm, park behind the venue…">${esc(p.notes||"")}</textarea></div>`;
-  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button><button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button></div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div><div class="footer-actions"><button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
+  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button><button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button></div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div><div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button></div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
   const buyerSel=document.getElementById("tkBuyer");
   if(buyerSel&&me) buyerSel.value=me;
   renderDraft();
@@ -695,6 +791,8 @@ function wireDetail(){
   if(attToggle) attToggle.onclick=()=>{ attendanceExpanded=!attendanceExpanded; ticketsExpanded=false; renderDetail(); };
   const tkToggle=document.getElementById("ticketsToggle");
   if(tkToggle) tkToggle.onclick=()=>{ ticketsExpanded=!ticketsExpanded; attendanceExpanded=false; renderDetail(); };
+  const prepToggle=document.getElementById("prepartyToggle");
+  if(prepToggle) prepToggle.onclick=()=>{ prepartyExpanded=!prepartyExpanded; renderDetail(); };
   const hostBtn=document.getElementById("togglePrepartyHost");
   if(hostBtn) hostBtn.onclick=()=>{
     if(!me){ alert("Pick who you are first (top right, \"I'm ___\")."); return; }
@@ -726,6 +824,8 @@ function wireDetail(){
     const p=state.parties.find(x=>x.id===openPartyId);
     if(p&&logisticsEl.value!==(p.notes||"")) updateLogistics(openPartyId,logisticsEl.value);
   };
+  const calBtn=document.getElementById("addCalendar");
+  if(calBtn) calBtn.onclick=()=>addToCalendar(openPartyId);
   document.getElementById("exportGuests").onclick=()=>exportGuestList(openPartyId);
   document.getElementById("deleteParty").onclick=async()=>{
     const p=state.parties.find(x=>x.id===openPartyId);
@@ -742,14 +842,14 @@ function collectHeadliners(){
 }
 function openNewPartyModal(){
   const root=document.getElementById("modalRoot");
-  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>New party 🎉</h3><div class="field"><label>Name</label><input id="mName" placeholder="e.g. Tomorrowland, Lisa's birthday…" maxlength="60"></div><div class="field"><label>Date</label><input id="mDate" type="date"></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80"></div>${headlinerFieldsHtml()}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mCreate">Create party</button></div></div></div>`;
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>New party 🎉</h3><div class="field"><label>Name</label><input id="mName" placeholder="e.g. Tomorrowland, Lisa's birthday…" maxlength="60"></div><div class="field"><label>Date & time <span style="font-weight:400">(time optional)</span></label><div style="display:flex;gap:8px"><input id="mDate" type="date" style="flex:1;width:auto"><input id="mTime" type="time" style="flex:1;width:auto"></div></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80"></div>${headlinerFieldsHtml()}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mCreate">Create party</button></div></div></div>`;
   const close=()=>{root.innerHTML="";};
   document.getElementById("mCancel").onclick=close;
   document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
   const nameInp=document.getElementById("mName"); nameInp.focus();
   document.getElementById("mCreate").onclick=async()=>{
     const name=nameInp.value.trim(); if(!name){nameInp.focus();return;}
-    const id=await addParty({name,date:document.getElementById("mDate").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
+    const id=await addParty({name,date:document.getElementById("mDate").value,startTime:document.getElementById("mTime").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
     close(); if(id){openParty(id);}
   };
   nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mCreate").click();};
@@ -770,14 +870,14 @@ function openRenameModal(id,current){
 }
 function openEditPartyModal(p){
   const root=document.getElementById("modalRoot");
-  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Edit party ✎</h3><div class="field"><label>Name</label><input id="mName" maxlength="60" value="${esc(p.name||"")}"></div><div class="field"><label>Date</label><input id="mDate" type="date" value="${p.date||""}"></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80" value="${esc(p.location||"")}"></div>${headlinerFieldsHtml(p.headliners)}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40" value="${esc(p.genre||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save changes</button></div></div></div>`;
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Edit party ✎</h3><div class="field"><label>Name</label><input id="mName" maxlength="60" value="${esc(p.name||"")}"></div><div class="field"><label>Date & time <span style="font-weight:400">(time optional)</span></label><div style="display:flex;gap:8px"><input id="mDate" type="date" value="${p.date||""}" style="flex:1;width:auto"><input id="mTime" type="time" value="${p.start_time||""}" style="flex:1;width:auto"></div></div><div class="field"><label>Location <span style="font-weight:400">(optional)</span></label><input id="mLoc" placeholder="Where is it?" maxlength="80" value="${esc(p.location||"")}"></div>${headlinerFieldsHtml(p.headliners)}<div class="field"><label>Genre <span style="font-weight:400">(optional)</span></label><input id="mGenre" placeholder="House, Techno, Hip-Hop…" maxlength="40" value="${esc(p.genre||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save changes</button></div></div></div>`;
   const close=()=>{root.innerHTML="";};
   document.getElementById("mCancel").onclick=close;
   document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
   const nameInp=document.getElementById("mName"); nameInp.focus();
   document.getElementById("mSave").onclick=async()=>{
     const name=nameInp.value.trim(); if(!name){nameInp.focus();return;}
-    await updateParty(p.id,{name,date:document.getElementById("mDate").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
+    await updateParty(p.id,{name,date:document.getElementById("mDate").value,startTime:document.getElementById("mTime").value,location:document.getElementById("mLoc").value.trim(),headliners:collectHeadliners(),genre:document.getElementById("mGenre").value.trim()});
     close();
   };
   nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
@@ -792,6 +892,18 @@ function renderIosBanner(){
   if(!isIos()||isInStandaloneMode()||dismissed){ el.innerHTML=""; return; }
   el.innerHTML=`<div class="banner ios-hint"><span>📲 Get the app: open this page in <b>Safari</b>, tap the <b>Share</b> icon, then <b>"Add to Home Screen"</b>.</span><button type="button" id="dismissIosHint" title="Dismiss">✕</button></div>`;
   document.getElementById("dismissIosHint").onclick=()=>{ localStorage.setItem("shtamp-ios-hint-dismissed","1"); el.innerHTML=""; };
+}
+function renderNotifBanner(){
+  const el=document.getElementById("notifBanner");
+  if(!el) return;
+  // Only relevant when push is supported and the user hasn't decided yet.
+  if(!("Notification" in window)||!("serviceWorker" in navigator)||!("PushManager" in window)||Notification.permission!=="default"){ el.innerHTML=""; return; }
+  // Snoozed on dismiss; re-ask after a week.
+  const snoozed=Number(localStorage.getItem("shtamp-notif-snooze")||0);
+  if(snoozed && (Date.now()-snoozed) < 7*86400000){ el.innerHTML=""; return; }
+  el.innerHTML=`<div class="banner notif-hint"><span>🔔 Turn on notifications so you don't miss new parties.</span><span class="nh-actions"><button type="button" class="nh-enable">Enable</button><button type="button" class="nh-dismiss" title="Not now">✕</button></span></div>`;
+  el.querySelector(".nh-enable").onclick=async()=>{ await enablePushNotifications(); renderNotifBanner(); };
+  el.querySelector(".nh-dismiss").onclick=()=>{ localStorage.setItem("shtamp-notif-snooze",String(Date.now())); el.innerHTML=""; };
 }
 /* ---------- install prompt ---------- */
 window.addEventListener("beforeinstallprompt",(e)=>{
@@ -849,6 +961,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElem
 /* ---------- boot ---------- */
 (async function(){
   renderIosBanner();
+  renderNotifBanner();
   if(!configured){
     document.getElementById("view").innerHTML=`<div class="setup"><h1>Almost there 🎟</h1><p>This app reads its database keys from a file called <code>config.js</code>. Open that file, paste your Supabase <code>Project URL</code> and key between the quotes, save, and re-deploy the folder.</p><p>You only ever edit <code>config.js</code> — the app file stays as-is.</p></div>`;
     return;
