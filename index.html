@@ -53,6 +53,8 @@
   .banner.notif-hint .nh-enable{background:var(--vermilion);color:#fff;font-weight:700;padding:5px 13px;border-radius:999px;font-size:13px}
   .banner.notif-hint .nh-dismiss{color:inherit;font-weight:700;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center}
   .banner.notif-hint .nh-dismiss:hover{background:rgba(255,74,43,.15)}
+  .banner.update-hint{background:rgba(18,166,110,.1);border:1px solid rgba(18,166,110,.35);color:#0d7a52;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .banner.update-hint button{background:var(--jade);color:#fff;font-weight:700;padding:5px 13px;border-radius:999px;font-size:13px;flex:0 0 auto}
   .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:32px 0 18px;flex-wrap:wrap}
   .sec-head h2{font-family:'Bricolage Grotesque';font-weight:800;font-size:30px;letter-spacing:-.03em;line-height:1}
   .sec-head p{color:var(--slate);font-size:14px;margin-top:6px}
@@ -209,6 +211,7 @@
   <div id="storeBanner"></div>
   <div id="iosBanner"></div>
   <div id="notifBanner"></div>
+  <div id="updateBanner"></div>
   <main class="wrap" id="view"></main>
   <div id="detailRoot"></div>
   <div id="modalRoot"></div>
@@ -909,6 +912,35 @@ function renderNotifBanner(){
   el.querySelector(".nh-enable").onclick=async()=>{ await enablePushNotifications(); renderNotifBanner(); };
   el.querySelector(".nh-dismiss").onclick=()=>{ localStorage.setItem("shtamp-notif-snooze",String(Date.now())); el.innerHTML=""; };
 }
+/* ---------- update check ----------
+   Installed home-screen apps often resume a suspended page from memory
+   instead of reloading from the network, so a stale version can stick
+   around indefinitely. We compare against version.json (fetched fresh,
+   never cached) whenever the app comes back to the foreground. */
+let bootVersion=null;
+let updateAvailable=false;
+async function fetchVersion(){
+  try{
+    const r=await fetch("version.json?t="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    return d.v;
+  }catch(e){ return null; }
+}
+async function checkForUpdate(){
+  if(bootVersion==null||updateAvailable) return;
+  const v=await fetchVersion();
+  if(v!=null&&v!==bootVersion){ updateAvailable=true; renderUpdateBanner(); }
+}
+function renderUpdateBanner(){
+  const el=document.getElementById("updateBanner");
+  if(!el) return;
+  if(!updateAvailable){ el.innerHTML=""; return; }
+  el.innerHTML=`<div class="banner update-hint"><span>🔄 A new version of the app is ready.</span><button type="button" id="doRefresh">Refresh</button></div>`;
+  document.getElementById("doRefresh").onclick=()=>window.location.reload();
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkForUpdate(); });
+window.addEventListener("focus",()=>checkForUpdate());
+setInterval(checkForUpdate,5*60000);
 /* ---------- install prompt ---------- */
 window.addEventListener("beforeinstallprompt",(e)=>{
   e.preventDefault();
@@ -966,6 +998,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElem
 (async function(){
   renderIosBanner();
   renderNotifBanner();
+  bootVersion=await fetchVersion();
   if(!configured){
     document.getElementById("view").innerHTML=`<div class="setup"><h1>Almost there 🎟</h1><p>This app reads its database keys from a file called <code>config.js</code>. Open that file, paste your Supabase <code>Project URL</code> and key between the quotes, save, and re-deploy the folder.</p><p>You only ever edit <code>config.js</code> — the app file stays as-is.</p></div>`;
     return;
