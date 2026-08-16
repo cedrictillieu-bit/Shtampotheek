@@ -42,6 +42,15 @@
   .tabs{display:flex;gap:4px;background:rgba(36,30,46,.06);padding:4px;border-radius:999px}
   .tab{padding:7px 16px;border-radius:999px;font-weight:600;font-size:14px;color:var(--slate)}
   .tab[aria-selected="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(36,30,46,.1)}
+  .tab-more{position:relative;display:flex}
+  .tab-more-btn{display:inline-flex;align-items:center;gap:4px}
+  .tab-more-btn .caret{font-size:15px;line-height:1;transition:transform .15s ease}
+  .tab-more-btn[aria-expanded="true"] .caret{transform:rotate(180deg)}
+  .tab-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:30;background:var(--card);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 8px 28px rgba(36,30,46,.18);padding:5px;min-width:132px;display:flex;flex-direction:column;gap:2px}
+  .tab-menu[hidden]{display:none}
+  .tab-menu-item{text-align:left;padding:9px 12px;border-radius:8px;font-weight:600;font-size:14px;color:var(--ink);white-space:nowrap}
+  .tab-menu-item:hover{background:rgba(36,30,46,.06)}
+  .tab-menu-item[aria-selected="true"]{background:var(--vermilion);color:#fff}
   .banner{font-size:13px;padding:10px 16px;border-radius:10px;margin:16px auto 0;max-width:880px}
   .banner.warn{background:#FFF4E5;border:1px solid #F3C98B;color:#8a5a10}
   .banner.err{background:#FDECEA;border:1px solid #F1A9A0;color:#a3271b}
@@ -213,9 +222,13 @@
     .att-row .who{flex:1 1 100%}
     .seg{flex:1 1 100%;justify-content:space-between}
     .seg button{padding:8px 9px;flex:1}
-    /* Six tabs don't fit one phone-width row — let them wrap instead of squashing. */
-    .tabs{flex-wrap:wrap;justify-content:center;width:100%;border-radius:16px}
-    .tab{padding:7px 12px;font-size:13px}
+    /* Keep the bar to a single row on phones. */
+    .tab{padding:7px 10px;font-size:13px}
+    .tab-more-btn{padding:7px 8px}
+    /* The "I'm ___" select grows to the longest crew name and pushed the
+       header onto a third row — cap it so brand + picker share one line. */
+    .topbar-inner{gap:10px;padding:12px 16px}
+    .me select{max-width:104px;text-overflow:ellipsis}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -230,8 +243,13 @@
         <button class="tab" role="tab" data-tab="calendar" aria-selected="false">Calendar</button>
         <button class="tab" role="tab" data-tab="people" aria-selected="false">Crew</button>
         <button class="tab" role="tab" data-tab="money" aria-selected="false">Money</button>
-        <button class="tab" role="tab" data-tab="stats" aria-selected="false">Stats</button>
-        <button class="tab" role="tab" data-tab="archive" aria-selected="false">Archive</button>
+        <div class="tab-more">
+          <button class="tab tab-more-btn" id="moreTabsBtn" aria-haspopup="menu" aria-expanded="false" title="More"><span id="moreTabsLabel"></span><span class="caret">⌄</span></button>
+          <div class="tab-menu" id="tabMenu" role="menu" hidden>
+            <button class="tab-menu-item" role="menuitem" data-tab="stats">Stats</button>
+            <button class="tab-menu-item" role="menuitem" data-tab="archive">Archive</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -651,7 +669,8 @@ async function claimTicket(ticketId,holderId){
    ============================================================ */
 function render(){
   renderMeSelect();
-  document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
+  document.querySelectorAll(".tab[data-tab],.tab-menu-item").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
+  renderMoreTabs();
   document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="calendar" ? calendarView() : currentTab==="people" ? peopleView() : currentTab==="money" ? moneyView() : currentTab==="stats" ? statsView() : archiveView();
   wireView(); renderDetail(); renderBanner();
 }
@@ -1171,9 +1190,35 @@ async function enablePushNotifications(){
   render();
 }
 /* ---------- topbar ---------- */
-document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{currentTab=t.dataset.tab;render();});
+/* ---------- tabs (incl. the ⌄ overflow menu) ---------- */
+function closeTabMenu(){
+  const menu=document.getElementById("tabMenu"), btn=document.getElementById("moreTabsBtn");
+  if(menu) menu.hidden=true;
+  if(btn) btn.setAttribute("aria-expanded","false");
+}
+// Shows the active tab's name on the ⌄ button when it lives in the menu,
+// so you can still tell where you are without opening it.
+function renderMoreTabs(){
+  const btn=document.getElementById("moreTabsBtn"), label=document.getElementById("moreTabsLabel");
+  if(!btn||!label) return;
+  const hidden=[...document.querySelectorAll(".tab-menu-item")].map(i=>i.dataset.tab);
+  const activeHidden=hidden.includes(currentTab);
+  label.textContent=activeHidden?document.querySelector(`.tab-menu-item[data-tab="${currentTab}"]`).textContent:"";
+  btn.setAttribute("aria-selected", activeHidden?"true":"false");
+}
+document.querySelectorAll(".tab[data-tab],.tab-menu-item").forEach(t=>t.onclick=()=>{
+  currentTab=t.dataset.tab; closeTabMenu(); render();
+});
+document.getElementById("moreTabsBtn").onclick=e=>{
+  e.stopPropagation();
+  const menu=document.getElementById("tabMenu"), btn=e.currentTarget;
+  const open=menu.hidden;
+  menu.hidden=!open;
+  btn.setAttribute("aria-expanded",String(open));
+};
+document.addEventListener("click",e=>{ if(!e.target.closest(".tab-more")) closeTabMenu(); });
 document.getElementById("meSelect").onchange=e=>{me=e.target.value||null; if(me)localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me"); render();};
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElementById("modalRoot").innerHTML)document.getElementById("modalRoot").innerHTML="";else if(openPartyId){openPartyId=null;render();}}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!document.getElementById("tabMenu").hidden)closeTabMenu();else if(document.getElementById("modalRoot").innerHTML)document.getElementById("modalRoot").innerHTML="";else if(openPartyId){openPartyId=null;render();}}});
 window.addEventListener("popstate",()=>{ if(openPartyId){ openPartyId=null; render(); } });
 
 /* ---------- boot ---------- */
