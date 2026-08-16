@@ -69,11 +69,16 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ---- Create an expense ----
-  if (payload.action === "expense") {
-    const { description, cost, groupId, details, shares } = payload;
+  // ---- Create or update an expense ----
+  // "expense" creates a new one; "update" overwrites an existing one in place
+  // (Splitwise replaces ALL shares when any users__ field is supplied).
+  if (payload.action === "expense" || payload.action === "update") {
+    const { description, cost, groupId, details, shares, expenseId } = payload;
     if (!description || !cost || !Array.isArray(shares) || shares.length === 0) {
       return json({ ok: false, error: "description, cost and shares are required." }, 400);
+    }
+    if (payload.action === "update" && !expenseId) {
+      return json({ ok: false, error: "expenseId is required to update." }, 400);
     }
 
     // Splitwise wants flattened form fields: users__0__email, users__0__paid_share, ...
@@ -96,7 +101,8 @@ Deno.serve(async (req) => {
       form.set(`users__${i}__owed_share`, String(s.owed));
     });
 
-    const r = await fetch(`${API}/create_expense`, {
+    const path = payload.action === "update" ? `/update_expense/${expenseId}` : "/create_expense";
+    const r = await fetch(`${API}${path}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${SPLITWISE_API_KEY}`,
@@ -114,6 +120,21 @@ Deno.serve(async (req) => {
     }
 
     return json({ ok: true, expenseId: body.expenses[0].id });
+  }
+
+  // ---- Delete an expense (soft-delete; recoverable in Splitwise) ----
+  if (payload.action === "delete") {
+    const { expenseId } = payload;
+    if (!expenseId) return json({ ok: false, error: "expenseId is required." }, 400);
+    const r = await fetch(`${API}/delete_expense/${expenseId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SPLITWISE_API_KEY}` },
+    });
+    const body = await r.json().catch(() => null);
+    if (r.status !== 200 || body?.success === false) {
+      return json({ ok: false, error: "Splitwise wouldn't delete it.", details: body?.errors, raw: body }, 502);
+    }
+    return json({ ok: true });
   }
 
   return json({ ok: false, error: `Unknown action: ${payload.action}` }, 400);

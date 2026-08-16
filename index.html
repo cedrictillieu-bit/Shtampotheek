@@ -491,10 +491,61 @@ function splitwiseSplit(p){
   });
   return {total:Math.round(total*100)/100, rows, missing:rows.filter(r=>!r.email)};
 }
+const splitwiseSyncFailed=new Set();   // party ids whose last auto-sync didn't land
+async function splitwiseCall(body){
+  const res=await fetch(`${SUPABASE_URL}/functions/v1/splitwise`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},
+    body:JSON.stringify(body)
+  });
+  const data=await res.json().catch(()=>null);
+  if(!res.ok||!data||!data.ok){
+    const detail=data&&data.details?` ${JSON.stringify(data.details)}`:"";
+    throw new Error(((data&&data.error)||`HTTP ${res.status}`)+detail);
+  }
+  return data;
+}
+function splitwiseExpenseBody(p,rows,total,action,expenseId){
+  return {
+    action, expenseId,
+    description:p.name,
+    cost:total.toFixed(2),
+    details:`Tickets via Shtamp${p.date?` — ${p.date}`:""}`,
+    shares:rows.map(r=>{
+      const parts=r.name.trim().split(/\s+/);
+      return {email:r.email, firstName:parts[0], lastName:parts.slice(1).join(" "),
+              paid:r.paid.toFixed(2), owed:r.owed.toFixed(2)};
+    })
+  };
+}
+// Keeps an ALREADY-SENT party's Splitwise expense in step with the tickets.
+// Does nothing until the expense has been created once via the button, so
+// half-finished ticket lists never show up in anyone's Splitwise.
+async function syncSplitwise(partyId){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p||!p.splitwise_expense_id) return;
+  const {total,rows,missing}=splitwiseSplit(p);
+  try{
+    if(!total){
+      // Nothing priced left — retire the expense rather than leave a stale one.
+      await splitwiseCall({action:"delete",expenseId:p.splitwise_expense_id});
+      await supa.from("parties").update({splitwise_expense_id:null}).eq("id",partyId);
+    }else{
+      if(missing.length) throw new Error(`No Splitwise email for: ${missing.map(m=>m.name).join(", ")}`);
+      await splitwiseCall(splitwiseExpenseBody(p,rows,total,"update",p.splitwise_expense_id));
+    }
+    splitwiseSyncFailed.delete(partyId);
+  }catch(e){
+    splitwiseSyncFailed.add(partyId);
+    console.warn("Splitwise sync failed:",e.message);
+  }
+  if(openPartyId===partyId) renderDetail();
+}
 async function sendToSplitwise(partyId){
   const p=state.parties.find(x=>x.id===partyId);
   if(!p) return;
   const {total,rows,missing}=splitwiseSplit(p);
+  const alreadySent=!!p.splitwise_expense_id;
   if(!total){ alert("Nothing to split — no tickets with a price on this party yet."); return; }
   if(missing.length){
     alert(`These people need a Splitwise email before this can be sent:\n\n${missing.map(m=>"• "+m.name).join("\n")}\n\nAdd them in the Crew tab.`);
@@ -502,40 +553,27 @@ async function sendToSplitwise(partyId){
   }
   const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
   const summary=rows.map(r=>`${r.name}: paid ${money(r.paid)}, owes ${money(r.owed)}`).join("\n");
-  if(!confirm(`Send this to Splitwise?\n\n${p.name} — ${money(total)}\n\n${summary}`)) return;
+  const verb=alreadySent?"Update the Splitwise expense?":"Send this to Splitwise?";
+  const note=alreadySent?"":"\n\nAfter this, it stays in sync automatically whenever tickets change.";
+  if(!confirm(`${verb}\n\n${p.name} — ${money(total)}\n\n${summary}${note}`)) return;
 
   const btn=document.getElementById("sendSplitwise");
   if(btn){ btn.disabled=true; btn.textContent="Sending…"; }
   try{
-    const res=await fetch(`${SUPABASE_URL}/functions/v1/splitwise`,{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},
-      body:JSON.stringify({
-        action:"expense",
-        description:p.name,
-        cost:total.toFixed(2),
-        details:`Tickets via Shtamp${p.date?` — ${p.date}`:""}`,
-        shares:rows.map(r=>{
-          const parts=r.name.trim().split(/\s+/);
-          return {email:r.email, firstName:parts[0], lastName:parts.slice(1).join(" "),
-                  paid:r.paid.toFixed(2), owed:r.owed.toFixed(2)};
-        })
-      })
-    });
-    const data=await res.json().catch(()=>null);
-    if(!res.ok||!data||!data.ok){
-      const detail=data&&data.details?`\n\n${JSON.stringify(data.details)}`:"";
-      alert(`Splitwise didn't accept it.\n\n${(data&&data.error)||`HTTP ${res.status}`}${detail}`);
-      return;
+    const data=await splitwiseCall(splitwiseExpenseBody(
+      p,rows,total, alreadySent?"update":"expense", p.splitwise_expense_id));
+    if(!alreadySent){
+      await supa.from("parties").update({splitwise_expense_id:String(data.expenseId)}).eq("id",partyId);
+      await refresh();
     }
-    await supa.from("parties").update({splitwise_expense_id:String(data.expenseId)}).eq("id",partyId);
-    await refresh();
-    alert("Sent to Splitwise ✅");
+    splitwiseSyncFailed.delete(partyId);
+    if(openPartyId===partyId) renderDetail();
+    alert(alreadySent?"Splitwise updated ✅":"Sent to Splitwise ✅");
   }catch(e){
-    alert("Couldn't reach the Splitwise function.\n\n"+e);
+    alert(`Splitwise didn't accept it.\n\n${e.message}`);
   }finally{
     const b=document.getElementById("sendSplitwise");
-    if(b){ b.disabled=false; b.textContent="💸 Send to Splitwise"; }
+    if(b){ b.disabled=false; b.textContent=p.splitwise_expense_id?"💸 Re-sync Splitwise":"💸 Send to Splitwise"; }
   }
 }
 function exportGuestList(partyId){
@@ -631,13 +669,16 @@ async function addTickets(partyId,buyerId,holderIds,spares,price){
   const p=state.parties.find(x=>x.id===partyId);
   for(const h of holderIds){ if(p&&!p.attendance[h]) await supa.from("attendance").upsert({party_id:partyId,person_id:h,status:"going"},{onConflict:"party_id,person_id"}); }
   await refresh();
+  syncSplitwise(partyId);
 }
 async function delTicket(id){
   const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===id));
+  const partyId=p&&p.id;
   if(p) p.tickets=p.tickets.filter(t=>t.id!==id);
   render();
   const {error}=await supa.from("tickets").delete().eq("id",id);
   if(error) await refresh();
+  if(partyId) syncSplitwise(partyId);
 }
 async function claimTicket(ticketId,holderId){
   const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===ticketId));
@@ -652,6 +693,7 @@ async function claimTicket(ticketId,holderId){
   let r2={error:null};
   if(holderId&&!wasGoing) r2=await supa.from("attendance").upsert({party_id:p.id,person_id:holderId,status:"going"},{onConflict:"party_id,person_id"});
   if(r1.error||r2.error) await refresh();
+  if(p) syncSplitwise(p.id);
 }
 
 /* ============================================================
@@ -867,7 +909,7 @@ function renderDetail(){
   const logisticsPanel=`<div class="panel"><h3>Notes</h3><div class="sub">Meeting point, carpool, anything people need to know.</div><textarea id="logisticsText" rows="4" placeholder="e.g. Meet at the station at 8pm, park behind the venue…">${esc(p.notes||"")}</textarea></div>`;
   const ticketsToggleBtn=ticketsRequired?`<button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button>`:"";
   const mainTicketsPanel=ticketsRequired?`<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div>`:"";
-  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button>${(ticketsRequired&&totalSpent>0)?`<button class="btn ghost sm" id="sendSplitwise">💸 Send to Splitwise</button>${p.splitwise_expense_id?`<span class="sub" style="margin:0;align-self:center">already sent ✅</span>`:""}`:""}</div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
+  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button>${(ticketsRequired&&totalSpent>0)?`<button class="btn ghost sm" id="sendSplitwise">${p.splitwise_expense_id?"💸 Re-sync Splitwise":"💸 Send to Splitwise"}</button>${splitwiseSyncFailed.has(p.id)?`<span class="sub" style="margin:0;align-self:center;color:var(--vermilion);font-weight:700">⚠ sync failed — tap to retry</span>`:p.splitwise_expense_id?`<span class="sub" style="margin:0;align-self:center">synced ✅</span>`:""}`:""}</div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
   const buyerSel=document.getElementById("tkBuyer");
   if(buyerSel&&me) buyerSel.value=me;
   renderDraft();
