@@ -397,9 +397,11 @@ async function addPerson(name){
   const color = AVATAR_COLORS[state.people.length % AVATAR_COLORS.length];
   await supa.from("people").insert({name, color}); await refresh();
 }
-async function renamePerson(id,name){
+async function renamePerson(id,name,splitwiseEmail){
   const n=(name||"").trim(); if(!n) return;
-  await supa.from("people").update({name:n}).eq("id",id);
+  const patch={name:n};
+  if(splitwiseEmail!==undefined) patch.splitwise_email=(splitwiseEmail||"").trim()||null;
+  await supa.from("people").update(patch).eq("id",id);
   await refresh();
 }
 async function delPerson(id){
@@ -459,6 +461,82 @@ function addToCalendar(partyId){
   a.href=url; a.download=`${p.name.replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.ics`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+/* ---------- Splitwise ---------- */
+// Works out who fronted money and who owes what, from the ticket data.
+//   paid  = value of tickets this person BOUGHT
+//   owed  = value of tickets this person HOLDS
+//           (an unclaimed spare stays owed by whoever bought it)
+function splitwiseSplit(p){
+  const paid={}, owed={};
+  let total=0;
+  (p.tickets||[]).forEach(t=>{
+    const price=Number(t.price)||0;
+    if(!price) return;              // free/unpriced tickets don't affect money
+    total+=price;
+    paid[t.buyerId]=(paid[t.buyerId]||0)+price;
+    const ower=t.holderId||t.buyerId;
+    owed[ower]=(owed[ower]||0)+price;
+  });
+  const ids=[...new Set([...Object.keys(paid),...Object.keys(owed)])];
+  const rows=ids.map(id=>{
+    const person=state.people.find(x=>x.id===id);
+    return {
+      personId:id,
+      name:person?person.name:"?",
+      email:person&&person.splitwise_email?person.splitwise_email.trim():"",
+      paid:Math.round((paid[id]||0)*100)/100,
+      owed:Math.round((owed[id]||0)*100)/100
+    };
+  });
+  return {total:Math.round(total*100)/100, rows, missing:rows.filter(r=>!r.email)};
+}
+async function sendToSplitwise(partyId){
+  const p=state.parties.find(x=>x.id===partyId);
+  if(!p) return;
+  const {total,rows,missing}=splitwiseSplit(p);
+  if(!total){ alert("Nothing to split — no tickets with a price on this party yet."); return; }
+  if(missing.length){
+    alert(`These people need a Splitwise email before this can be sent:\n\n${missing.map(m=>"• "+m.name).join("\n")}\n\nAdd them in the Crew tab.`);
+    return;
+  }
+  const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
+  const summary=rows.map(r=>`${r.name}: paid ${money(r.paid)}, owes ${money(r.owed)}`).join("\n");
+  if(!confirm(`Send this to Splitwise?\n\n${p.name} — ${money(total)}\n\n${summary}`)) return;
+
+  const btn=document.getElementById("sendSplitwise");
+  if(btn){ btn.disabled=true; btn.textContent="Sending…"; }
+  try{
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/splitwise`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},
+      body:JSON.stringify({
+        action:"expense",
+        description:p.name,
+        cost:total.toFixed(2),
+        details:`Tickets via Shtamp${p.date?` — ${p.date}`:""}`,
+        shares:rows.map(r=>{
+          const parts=r.name.trim().split(/\s+/);
+          return {email:r.email, firstName:parts[0], lastName:parts.slice(1).join(" "),
+                  paid:r.paid.toFixed(2), owed:r.owed.toFixed(2)};
+        })
+      })
+    });
+    const data=await res.json().catch(()=>null);
+    if(!res.ok||!data||!data.ok){
+      const detail=data&&data.details?`\n\n${JSON.stringify(data.details)}`:"";
+      alert(`Splitwise didn't accept it.\n\n${(data&&data.error)||`HTTP ${res.status}`}${detail}`);
+      return;
+    }
+    await supa.from("parties").update({splitwise_expense_id:String(data.expenseId)}).eq("id",partyId);
+    await refresh();
+    alert("Sent to Splitwise ✅");
+  }catch(e){
+    alert("Couldn't reach the Splitwise function.\n\n"+e);
+  }finally{
+    const b=document.getElementById("sendSplitwise");
+    if(b){ b.disabled=false; b.textContent="💸 Send to Splitwise"; }
+  }
 }
 function exportGuestList(partyId){
   const p=state.parties.find(x=>x.id===partyId);
@@ -646,7 +724,7 @@ function calendarView(){
 function peopleView(){
   const head=`<div class="sec-head"><div><h2>The crew</h2><p>Everyone in the group. Add friends so you can tag them on parties.</p></div></div>`;
   const list=state.people.length
-    ?`<div class="people-list">${sortedPeople().map(p=>`<div class="person-row"><div class="avatar" style="background:${colorFor(p.id)}">${esc(initials(p.name))}</div><div class="pname">${esc(p.name)}${p.id===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</div><button class="icon-x" data-editperson="${p.id}" title="Rename">✎</button><button class="icon-x" data-delperson="${p.id}" title="Remove">✕</button></div>`).join("")}</div>`
+    ?`<div class="people-list">${sortedPeople().map(p=>`<div class="person-row"><div class="avatar" style="background:${colorFor(p.id)}">${esc(initials(p.name))}</div><div class="pname">${esc(p.name)}${p.id===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</div>${p.splitwise_email?`<span class="tk-badge held" title="Splitwise: ${esc(p.splitwise_email)}">💸</span>`:""}<button class="icon-x" data-editperson="${p.id}" title="Edit">✎</button><button class="icon-x" data-delperson="${p.id}" title="Remove">✕</button></div>`).join("")}</div>`
     :`<div class="empty"><div class="big">👋</div><h3>No one here yet</h3><p>Add the members of your friend group to get started.</p></div>`;
   const nLabel=notifLabel();
   const notifSection=nLabel?`<div class="panel" style="margin-top:20px"><h3>Notifications</h3><div class="sub">Get notified when a new party is added, and again on the day of each party.</div><button class="btn ghost sm" id="enableNotifs" style="margin-top:10px">${nLabel}</button></div>`:"";
@@ -789,7 +867,7 @@ function renderDetail(){
   const logisticsPanel=`<div class="panel"><h3>Notes</h3><div class="sub">Meeting point, carpool, anything people need to know.</div><textarea id="logisticsText" rows="4" placeholder="e.g. Meet at the station at 8pm, park behind the venue…">${esc(p.notes||"")}</textarea></div>`;
   const ticketsToggleBtn=ticketsRequired?`<button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button>`:"";
   const mainTicketsPanel=ticketsRequired?`<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div>`:"";
-  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button></div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
+  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button>${(ticketsRequired&&totalSpent>0)?`<button class="btn ghost sm" id="sendSplitwise">💸 Send to Splitwise</button>${p.splitwise_expense_id?`<span class="sub" style="margin:0;align-self:center">already sent ✅</span>`:""}`:""}</div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
   const buyerSel=document.getElementById("tkBuyer");
   if(buyerSel&&me) buyerSel.value=me;
   renderDraft();
@@ -888,6 +966,8 @@ function wireDetail(){
   const calBtn=document.getElementById("addCalendar");
   if(calBtn) calBtn.onclick=()=>addToCalendar(openPartyId);
   document.getElementById("exportGuests").onclick=()=>exportGuestList(openPartyId);
+  const swBtn=document.getElementById("sendSplitwise");
+  if(swBtn) swBtn.onclick=()=>sendToSplitwise(openPartyId);
   document.getElementById("deleteParty").onclick=async()=>{
     const p=state.parties.find(x=>x.id===openPartyId);
     if(!confirm(`Delete "${p.name}"? This can't be undone.`))return;
@@ -916,15 +996,16 @@ function openNewPartyModal(){
   nameInp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mCreate").click();};
 }
 function openRenameModal(id,current){
+  const person=state.people.find(x=>x.id===id);
   const root=document.getElementById("modalRoot");
-  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Rename</h3><div class="field"><label>Name</label><input id="mNameEdit" maxlength="40" value="${esc(current||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save</button></div></div></div>`;
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Edit person ✎</h3><div class="field"><label>Name</label><input id="mNameEdit" maxlength="40" value="${esc(current||"")}"></div><div class="field"><label>Splitwise email <span style="font-weight:400">(optional)</span></label><input id="mSwEmail" type="email" inputmode="email" placeholder="the email they use on Splitwise" maxlength="120" value="${esc((person&&person.splitwise_email)||"")}"><div class="sub" style="margin:6px 0 0">Needed only to send ticket costs to Splitwise.</div></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save</button></div></div></div>`;
   const close=()=>{root.innerHTML="";};
   document.getElementById("mCancel").onclick=close;
   document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
   const inp=document.getElementById("mNameEdit"); inp.focus(); inp.select();
   document.getElementById("mSave").onclick=async()=>{
     const n=inp.value.trim(); if(!n){inp.focus();return;}
-    await renamePerson(id,n);
+    await renamePerson(id,n,document.getElementById("mSwEmail").value);
     close();
   };
   inp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
