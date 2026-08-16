@@ -213,6 +213,9 @@
     .att-row .who{flex:1 1 100%}
     .seg{flex:1 1 100%;justify-content:space-between}
     .seg button{padding:8px 9px;flex:1}
+    /* Six tabs don't fit one phone-width row — let them wrap instead of squashing. */
+    .tabs{flex-wrap:wrap;justify-content:center;width:100%;border-radius:16px}
+    .tab{padding:7px 12px;font-size:13px}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -226,6 +229,7 @@
         <button class="tab" role="tab" data-tab="parties" aria-selected="true">Parties</button>
         <button class="tab" role="tab" data-tab="calendar" aria-selected="false">Calendar</button>
         <button class="tab" role="tab" data-tab="people" aria-selected="false">Crew</button>
+        <button class="tab" role="tab" data-tab="money" aria-selected="false">Money</button>
         <button class="tab" role="tab" data-tab="stats" aria-selected="false">Stats</button>
         <button class="tab" role="tab" data-tab="archive" aria-selected="false">Archive</button>
       </div>
@@ -397,11 +401,9 @@ async function addPerson(name){
   const color = AVATAR_COLORS[state.people.length % AVATAR_COLORS.length];
   await supa.from("people").insert({name, color}); await refresh();
 }
-async function renamePerson(id,name,splitwiseEmail){
+async function renamePerson(id,name){
   const n=(name||"").trim(); if(!n) return;
-  const patch={name:n};
-  if(splitwiseEmail!==undefined) patch.splitwise_email=(splitwiseEmail||"").trim()||null;
-  await supa.from("people").update(patch).eq("id",id);
+  await supa.from("people").update({name:n}).eq("id",id);
   await refresh();
 }
 async function delPerson(id){
@@ -462,119 +464,67 @@ function addToCalendar(partyId){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
-/* ---------- Splitwise ---------- */
-// Works out who fronted money and who owes what, from the ticket data.
-//   paid  = value of tickets this person BOUGHT
-//   owed  = value of tickets this person HOLDS
-//           (an unclaimed spare stays owed by whoever bought it)
-function splitwiseSplit(p){
+/* ============================================================
+   MONEY  — who fronted cash, who owes it back
+   ------------------------------------------------------------
+   For every priced ticket:
+     the BUYER paid it, the HOLDER owes it.
+     An unclaimed spare stays owed by whoever bought it.
+   All arithmetic is done in integer cents so repeated adding
+   never drifts (0.1 + 0.2 problems compound over many tickets).
+   ============================================================ */
+const cents=v=>Math.round((Number(v)||0)*100);
+const eur=c=>(c/100).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
+// Per-person {paid, owed, net} in cents for one party.
+function partyLedger(p){
   const paid={}, owed={};
   let total=0;
   (p.tickets||[]).forEach(t=>{
-    const price=Number(t.price)||0;
-    if(!price) return;              // free/unpriced tickets don't affect money
-    total+=price;
-    paid[t.buyerId]=(paid[t.buyerId]||0)+price;
+    const c=cents(t.price);
+    if(!c) return;                 // free / unpriced tickets don't move money
+    total+=c;
+    paid[t.buyerId]=(paid[t.buyerId]||0)+c;
     const ower=t.holderId||t.buyerId;
-    owed[ower]=(owed[ower]||0)+price;
+    owed[ower]=(owed[ower]||0)+c;
   });
   const ids=[...new Set([...Object.keys(paid),...Object.keys(owed)])];
-  const rows=ids.map(id=>{
+  return {total, rows:ids.map(id=>({
+    personId:id, paid:paid[id]||0, owed:owed[id]||0, net:(paid[id]||0)-(owed[id]||0)
+  }))};
+}
+// Running balance across every party. net > 0 means the group owes them.
+function overallLedger(){
+  const net={}, paid={}, owed={}, perParty=[];
+  sortedParties().forEach(p=>{
+    const l=partyLedger(p);
+    if(!l.total) return;
+    perParty.push({party:p, ...l});
+    l.rows.forEach(r=>{
+      net[r.personId]=(net[r.personId]||0)+r.net;
+      paid[r.personId]=(paid[r.personId]||0)+r.paid;
+      owed[r.personId]=(owed[r.personId]||0)+r.owed;
+    });
+  });
+  const rows=Object.keys(net).map(id=>{
     const person=state.people.find(x=>x.id===id);
-    return {
-      personId:id,
-      name:person?person.name:"?",
-      email:person&&person.splitwise_email?person.splitwise_email.trim():"",
-      paid:Math.round((paid[id]||0)*100)/100,
-      owed:Math.round((owed[id]||0)*100)/100
-    };
-  });
-  return {total:Math.round(total*100)/100, rows, missing:rows.filter(r=>!r.email)};
+    return {personId:id, name:person?person.name:"(removed)", net:net[id], paid:paid[id], owed:owed[id]};
+  }).sort((a,b)=>b.net-a.net || a.name.localeCompare(b.name));
+  return {rows, perParty, total:perParty.reduce((s,x)=>s+x.total,0)};
 }
-const splitwiseSyncFailed=new Set();   // party ids whose last auto-sync didn't land
-async function splitwiseCall(body){
-  const res=await fetch(`${SUPABASE_URL}/functions/v1/splitwise`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_ANON_KEY},
-    body:JSON.stringify(body)
-  });
-  const data=await res.json().catch(()=>null);
-  if(!res.ok||!data||!data.ok){
-    const detail=data&&data.details?` ${JSON.stringify(data.details)}`:"";
-    throw new Error(((data&&data.error)||`HTTP ${res.status}`)+detail);
+// Fewest transfers that clear everyone out: repeatedly settle the biggest
+// debtor against the biggest creditor. Yields at most (people - 1) payments.
+function settleUp(rows){
+  const cred=rows.filter(r=>r.net>0).map(r=>({...r})).sort((a,b)=>b.net-a.net);
+  const debt=rows.filter(r=>r.net<0).map(r=>({...r})).sort((a,b)=>a.net-b.net);
+  const out=[]; let i=0,j=0;
+  while(i<debt.length&&j<cred.length){
+    const amt=Math.min(-debt[i].net, cred[j].net);
+    if(amt>0) out.push({from:debt[i].name, to:cred[j].name, amount:amt});
+    debt[i].net+=amt; cred[j].net-=amt;
+    if(debt[i].net===0) i++;
+    if(cred[j].net===0) j++;
   }
-  return data;
-}
-function splitwiseExpenseBody(p,rows,total,action,expenseId){
-  return {
-    action, expenseId,
-    description:p.name,
-    cost:total.toFixed(2),
-    details:`Tickets via Shtamp${p.date?` — ${p.date}`:""}`,
-    shares:rows.map(r=>{
-      const parts=r.name.trim().split(/\s+/);
-      return {email:r.email, firstName:parts[0], lastName:parts.slice(1).join(" "),
-              paid:r.paid.toFixed(2), owed:r.owed.toFixed(2)};
-    })
-  };
-}
-// Keeps an ALREADY-SENT party's Splitwise expense in step with the tickets.
-// Does nothing until the expense has been created once via the button, so
-// half-finished ticket lists never show up in anyone's Splitwise.
-async function syncSplitwise(partyId){
-  const p=state.parties.find(x=>x.id===partyId);
-  if(!p||!p.splitwise_expense_id) return;
-  const {total,rows,missing}=splitwiseSplit(p);
-  try{
-    if(!total){
-      // Nothing priced left — retire the expense rather than leave a stale one.
-      await splitwiseCall({action:"delete",expenseId:p.splitwise_expense_id});
-      await supa.from("parties").update({splitwise_expense_id:null}).eq("id",partyId);
-    }else{
-      if(missing.length) throw new Error(`No Splitwise email for: ${missing.map(m=>m.name).join(", ")}`);
-      await splitwiseCall(splitwiseExpenseBody(p,rows,total,"update",p.splitwise_expense_id));
-    }
-    splitwiseSyncFailed.delete(partyId);
-  }catch(e){
-    splitwiseSyncFailed.add(partyId);
-    console.warn("Splitwise sync failed:",e.message);
-  }
-  if(openPartyId===partyId) renderDetail();
-}
-async function sendToSplitwise(partyId){
-  const p=state.parties.find(x=>x.id===partyId);
-  if(!p) return;
-  const {total,rows,missing}=splitwiseSplit(p);
-  const alreadySent=!!p.splitwise_expense_id;
-  if(!total){ alert("Nothing to split — no tickets with a price on this party yet."); return; }
-  if(missing.length){
-    alert(`These people need a Splitwise email before this can be sent:\n\n${missing.map(m=>"• "+m.name).join("\n")}\n\nAdd them in the Crew tab.`);
-    return;
-  }
-  const money=c=>(Number(c)||0).toLocaleString("nl-BE",{style:"currency",currency:"EUR"});
-  const summary=rows.map(r=>`${r.name}: paid ${money(r.paid)}, owes ${money(r.owed)}`).join("\n");
-  const verb=alreadySent?"Update the Splitwise expense?":"Send this to Splitwise?";
-  const note=alreadySent?"":"\n\nAfter this, it stays in sync automatically whenever tickets change.";
-  if(!confirm(`${verb}\n\n${p.name} — ${money(total)}\n\n${summary}${note}`)) return;
-
-  const btn=document.getElementById("sendSplitwise");
-  if(btn){ btn.disabled=true; btn.textContent="Sending…"; }
-  try{
-    const data=await splitwiseCall(splitwiseExpenseBody(
-      p,rows,total, alreadySent?"update":"expense", p.splitwise_expense_id));
-    if(!alreadySent){
-      await supa.from("parties").update({splitwise_expense_id:String(data.expenseId)}).eq("id",partyId);
-      await refresh();
-    }
-    splitwiseSyncFailed.delete(partyId);
-    if(openPartyId===partyId) renderDetail();
-    alert(alreadySent?"Splitwise updated ✅":"Sent to Splitwise ✅");
-  }catch(e){
-    alert(`Splitwise didn't accept it.\n\n${e.message}`);
-  }finally{
-    const b=document.getElementById("sendSplitwise");
-    if(b){ b.disabled=false; b.textContent=p.splitwise_expense_id?"💸 Re-sync Splitwise":"💸 Send to Splitwise"; }
-  }
+  return out;
 }
 function exportGuestList(partyId){
   const p=state.parties.find(x=>x.id===partyId);
@@ -669,7 +619,7 @@ async function addTickets(partyId,buyerId,holderIds,spares,price){
   const p=state.parties.find(x=>x.id===partyId);
   for(const h of holderIds){ if(p&&!p.attendance[h]) await supa.from("attendance").upsert({party_id:partyId,person_id:h,status:"going"},{onConflict:"party_id,person_id"}); }
   await refresh();
-  syncSplitwise(partyId);
+
 }
 async function delTicket(id){
   const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===id));
@@ -678,7 +628,7 @@ async function delTicket(id){
   render();
   const {error}=await supa.from("tickets").delete().eq("id",id);
   if(error) await refresh();
-  if(partyId) syncSplitwise(partyId);
+
 }
 async function claimTicket(ticketId,holderId){
   const p=state.parties.find(x=>(x.tickets||[]).some(t=>t.id===ticketId));
@@ -693,7 +643,7 @@ async function claimTicket(ticketId,holderId){
   let r2={error:null};
   if(holderId&&!wasGoing) r2=await supa.from("attendance").upsert({party_id:p.id,person_id:holderId,status:"going"},{onConflict:"party_id,person_id"});
   if(r1.error||r2.error) await refresh();
-  if(p) syncSplitwise(p.id);
+
 }
 
 /* ============================================================
@@ -702,7 +652,7 @@ async function claimTicket(ticketId,holderId){
 function render(){
   renderMeSelect();
   document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
-  document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="calendar" ? calendarView() : currentTab==="people" ? peopleView() : currentTab==="stats" ? statsView() : archiveView();
+  document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="calendar" ? calendarView() : currentTab==="people" ? peopleView() : currentTab==="money" ? moneyView() : currentTab==="stats" ? statsView() : archiveView();
   wireView(); renderDetail(); renderBanner();
 }
 function renderBanner(){
@@ -737,6 +687,55 @@ function archiveView(){
   const cards=parties.map(p=>partyCard(p)).join("");
   return head+`<div class="grid">${cards}</div>`;
 }
+function moneyView(){
+  const head=`<div class="sec-head"><div><h2>Money</h2><p>Running balance across every party, from who bought which ticket.</p></div></div>`;
+  const {rows,perParty,total}=overallLedger();
+  if(!rows.length) return head+`<div class="empty"><div class="big">💶</div><h3>Nothing to settle</h3><p>Once tickets are logged with a price, who owes whom shows up here.</p></div>`;
+
+  const owedTo=rows.filter(r=>r.net>0), owing=rows.filter(r=>r.net<0), square=rows.filter(r=>r.net===0);
+  const outstanding=owedTo.reduce((s,r)=>s+r.net,0);
+  const summary=`<div class="stats" style="margin:0 0 18px"><div class="stat stat-group"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${eur(total)}</div><div class="l">Tickets total</div></div><div class="stat-mini"><div class="n mb">${eur(outstanding)}</div><div class="l">Still to settle</div></div></div></div></div>`;
+
+  const personRow=r=>{
+    const cls=r.net>0?"go":r.net<0?"cant":"none";
+    const label=r.net>0?`gets back ${eur(r.net)}`:r.net<0?`owes ${eur(-r.net)}`:"settled up";
+    return `<div class="att-row"><div class="who"><div class="avatar" style="background:${colorFor(r.personId)};width:30px;height:30px;font-size:13px;flex:0 0 30px">${esc(initials(r.name))}</div><span class="pname">${esc(r.name)}${r.personId===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</span></div><span class="sub" style="margin:0;text-align:right;font-size:12px">paid ${eur(r.paid)} · owed ${eur(r.owed)}</span><span class="chip ${cls==="go"?"go":cls==="cant"?"warn":"warn"}" style="white-space:nowrap">${label}</span></div>`;
+  };
+  const balances=`<div class="panel"><h3>Balances</h3><div class="sub">A positive balance means the group still owes them.</div>${
+    (owedTo.length?`<div class="roster-group-label go">Owed money (${owedTo.length})</div>`+owedTo.map(personRow).join(""):"")+
+    (owing.length?`<div class="roster-group-label cant">Owes money (${owing.length})</div>`+owing.map(personRow).join(""):"")+
+    (square.length?`<div class="roster-group-label">Settled (${square.length})</div>`+square.map(personRow).join(""):"")
+  }</div>`;
+
+  const transfers=settleUp(rows);
+  const settle=`<div class="panel"><h3>Settle up</h3><div class="sub">${transfers.length?`The fewest payments that clear everything — ${transfers.length} transfer${transfers.length>1?"s":""}.`:"Everyone's square. Nothing to pay."}</div>${
+    transfers.length?`<div style="margin-top:6px">${transfers.map(t=>`<div class="tk-item"><span class="arrow">→</span><span><b>${esc(t.from)}</b> pays <b>${esc(t.to)}</b></span><span style="flex:1"></span><span class="tk-price">${eur(t.amount)}</span></div>`).join("")}</div>
+    <button class="btn ghost sm" id="copySettle" style="margin-top:14px">📋 Copy summary</button>`:""}</div>`;
+
+  const breakdown=`<div class="panel"><h3>Per party</h3><div class="sub">What each night cost, most recent first.</div>${
+    [...perParty].reverse().map(pp=>{
+      const names=pp.rows.filter(r=>r.net!==0).sort((a,b)=>b.net-a.net).map(r=>{
+        const person=state.people.find(x=>x.id===r.personId);
+        const nm=person?person.name:"(removed)";
+        return `<span class="name-pill">${esc(nm)} ${r.net>0?"+":""}${eur(r.net)}</span>`;
+      }).join("");
+      return `<div class="tk-item" style="flex-direction:column;align-items:stretch;gap:6px"><div style="display:flex;align-items:center;gap:10px"><span><b>${esc(pp.party.name)}</b></span>${pp.party.date?`<span class="sub" style="margin:0;font-size:12px">${pp.party.date}</span>`:""}<span style="flex:1"></span><span class="tk-price">${eur(pp.total)}</span></div>${names?`<div class="name-pills">${names}</div>`:""}</div>`;
+    }).join("")
+  }</div>`;
+
+  return head+summary+balances+settle+breakdown;
+}
+function settleUpText(){
+  const {rows}=overallLedger();
+  const lines=["Who owes whom — Shtamp",""];
+  rows.forEach(r=>lines.push(`${r.name}: ${r.net>0?`gets back ${eur(r.net)}`:r.net<0?`owes ${eur(-r.net)}`:"settled up"}`));
+  const transfers=settleUp(rows);
+  if(transfers.length){
+    lines.push("","Settle up:");
+    transfers.forEach(t=>lines.push(`  ${t.from} pays ${t.to} ${eur(t.amount)}`));
+  }
+  return lines.join("\n");
+}
 function calendarView(){
   const {y,m}=calMonth;
   const monthName=new Date(y,m,1).toLocaleString("en-US",{month:"long",year:"numeric"});
@@ -766,7 +765,7 @@ function calendarView(){
 function peopleView(){
   const head=`<div class="sec-head"><div><h2>The crew</h2><p>Everyone in the group. Add friends so you can tag them on parties.</p></div></div>`;
   const list=state.people.length
-    ?`<div class="people-list">${sortedPeople().map(p=>`<div class="person-row"><div class="avatar" style="background:${colorFor(p.id)}">${esc(initials(p.name))}</div><div class="pname">${esc(p.name)}${p.id===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</div>${p.splitwise_email?`<span class="tk-badge held" title="Splitwise: ${esc(p.splitwise_email)}">💸</span>`:""}<button class="icon-x" data-editperson="${p.id}" title="Edit">✎</button><button class="icon-x" data-delperson="${p.id}" title="Remove">✕</button></div>`).join("")}</div>`
+    ?`<div class="people-list">${sortedPeople().map(p=>`<div class="person-row"><div class="avatar" style="background:${colorFor(p.id)}">${esc(initials(p.name))}</div><div class="pname">${esc(p.name)}${p.id===me?' <span style="color:var(--slate);font-weight:500;font-size:13px">(you)</span>':''}</div><button class="icon-x" data-editperson="${p.id}" title="Edit">✎</button><button class="icon-x" data-delperson="${p.id}" title="Remove">✕</button></div>`).join("")}</div>`
     :`<div class="empty"><div class="big">👋</div><h3>No one here yet</h3><p>Add the members of your friend group to get started.</p></div>`;
   const nLabel=notifLabel();
   const notifSection=nLabel?`<div class="panel" style="margin-top:20px"><h3>Notifications</h3><div class="sub">Get notified when a new party is added, and again on the day of each party.</div><button class="btn ghost sm" id="enableNotifs" style="margin-top:10px">${nLabel}</button></div>`:"";
@@ -909,7 +908,7 @@ function renderDetail(){
   const logisticsPanel=`<div class="panel"><h3>Notes</h3><div class="sub">Meeting point, carpool, anything people need to know.</div><textarea id="logisticsText" rows="4" placeholder="e.g. Meet at the station at 8pm, park behind the venue…">${esc(p.notes||"")}</textarea></div>`;
   const ticketsToggleBtn=ticketsRequired?`<button type="button" class="stat stat-group" id="ticketsToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${st.tickets}</div><div class="l">Tickets</div></div><div class="stat-mini"><div class="n sp">${st.spares}</div><div class="l">Spare</div></div></div><div class="stat-hint">${ticketsExpanded?"▲ hide overview":"▾ tap for overview"}</div></button>`:"";
   const mainTicketsPanel=ticketsRequired?`<div class="panel"><h3>Tickets</h3><div class="sub">Log who bought tickets, who each is for, and what it cost.</div>${tkItems}${totalSpent>0?`<div class="tk-total">Total spent: <b>${money(totalSpent)}</b></div>`:""}${state.people.length?`<div class="tk-form"><div class="tk-row"><span class="lbl">Bought by</span><select id="tkBuyer">${peopleOpts}</select></div><div class="tk-row"><span class="lbl">For</span><select id="tkHolderPick"><option value="">＋ add a friend…</option>${peopleOpts}</select></div><div id="tkChips" class="tk-chips"></div><div class="tk-row"><span class="lbl">Spares</span><div class="stepper"><button type="button" id="tkSpareMinus">−</button><span id="tkSpares">0</span><button type="button" id="tkSparePlus">＋</button><span class="stepper-hint">unclaimed extras</span></div></div><div class="tk-row"><span class="lbl">Price each</span><input id="tkPrice" class="tk-price-input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="€"></div><button class="btn accent" id="addTicket">Add tickets</button></div>`:''}</div>`:"";
-  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button>${(ticketsRequired&&totalSpent>0)?`<button class="btn ghost sm" id="sendSplitwise">${p.splitwise_expense_id?"💸 Re-sync Splitwise":"💸 Send to Splitwise"}</button>${splitwiseSyncFailed.has(p.id)?`<span class="sub" style="margin:0;align-self:center;color:var(--vermilion);font-weight:700">⚠ sync failed — tap to retry</span>`:p.splitwise_expense_id?`<span class="sub" style="margin:0;align-self:center">synced ✅</span>`:""}`:""}</div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
+  root.innerHTML=`<div class="detail${justOpenedParty?' detail-enter':''}"><div class="detail-head"><div class="wrap"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><button class="back" id="backBtn" style="margin-bottom:0">← All parties</button><button class="btn ghost sm" id="editParty" style="color:var(--paper);border-color:rgba(243,241,234,.35)">✎ Edit</button></div><h1>${esc(p.name)}${flames}</h1><div class="detail-meta">${d?`<span>📅 ${d.full}${p.start_time?` at ${fmtTime(p.start_time)}`:''}</span><span>⏳ ${countdownLabel(p.date)}</span>`:'<span>📅 Date TBD</span>'}${p.location?`<span>📍 ${esc(p.location)}</span>`:''}${headlinerMeta}${p.genre?`<span>🎵 ${esc(p.genre)}</span>`:''}</div></div></div><div class="wrap"><div class="stats"><button type="button" class="stat stat-group" id="attendanceToggle"><div class="stat-mini-row"><div class="stat-mini"><div class="n go">${st.going}</div><div class="l">Going</div></div><div class="stat-mini"><div class="n mb">${st.maybe}</div><div class="l">Maybe</div></div><div class="stat-mini"><div class="n cant">${st.cant}</div><div class="l">Can't</div></div></div><div class="stat-hint">${attendanceExpanded?"▲ hide list":"▾ tap to see who"}</div></button>${ticketsToggleBtn}</div>${rosterPanel}${ticketsPanel}${myStatusPanel}${prepartyPanel}${logisticsPanel}${mainTicketsPanel}<div class="footer-actions"><div style="display:flex;gap:8px;flex-wrap:wrap">${p.date?`<button class="btn ghost sm" id="addCalendar">📅 Add to calendar</button>`:""}<button class="btn ghost sm" id="exportGuests">⬇ Export guest list</button></div><button class="link-danger" id="deleteParty">Delete this party</button></div></div></div>`;
   const buyerSel=document.getElementById("tkBuyer");
   if(buyerSel&&me) buyerSel.value=me;
   renderDraft();
@@ -954,6 +953,13 @@ function wireView(){
   if(notifBtn) notifBtn.onclick=enablePushNotifications;
   const installBtn=document.getElementById("installApp");
   if(installBtn) installBtn.onclick=installApp;
+  const copyBtn=document.getElementById("copySettle");
+  if(copyBtn) copyBtn.onclick=async()=>{
+    const txt=settleUpText();
+    try{ await navigator.clipboard.writeText(txt); copyBtn.textContent="✅ Copied"; }
+    catch(e){ prompt("Copy this:",txt); }
+    setTimeout(()=>{ const b=document.getElementById("copySettle"); if(b) b.textContent="📋 Copy summary"; },1800);
+  };
   const calPrev=document.getElementById("calPrev"), calNext=document.getElementById("calNext"), calToday=document.getElementById("calToday");
   if(calPrev) calPrev.onclick=()=>{ calMonth = calMonth.m===0?{y:calMonth.y-1,m:11}:{y:calMonth.y,m:calMonth.m-1}; render(); };
   if(calNext) calNext.onclick=()=>{ calMonth = calMonth.m===11?{y:calMonth.y+1,m:0}:{y:calMonth.y,m:calMonth.m+1}; render(); };
@@ -1008,8 +1014,6 @@ function wireDetail(){
   const calBtn=document.getElementById("addCalendar");
   if(calBtn) calBtn.onclick=()=>addToCalendar(openPartyId);
   document.getElementById("exportGuests").onclick=()=>exportGuestList(openPartyId);
-  const swBtn=document.getElementById("sendSplitwise");
-  if(swBtn) swBtn.onclick=()=>sendToSplitwise(openPartyId);
   document.getElementById("deleteParty").onclick=async()=>{
     const p=state.parties.find(x=>x.id===openPartyId);
     if(!confirm(`Delete "${p.name}"? This can't be undone.`))return;
@@ -1040,14 +1044,14 @@ function openNewPartyModal(){
 function openRenameModal(id,current){
   const person=state.people.find(x=>x.id===id);
   const root=document.getElementById("modalRoot");
-  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Edit person ✎</h3><div class="field"><label>Name</label><input id="mNameEdit" maxlength="40" value="${esc(current||"")}"></div><div class="field"><label>Splitwise email <span style="font-weight:400">(optional)</span></label><input id="mSwEmail" type="email" inputmode="email" placeholder="the email they use on Splitwise" maxlength="120" value="${esc((person&&person.splitwise_email)||"")}"><div class="sub" style="margin:6px 0 0">Needed only to send ticket costs to Splitwise.</div></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save</button></div></div></div>`;
+  root.innerHTML=`<div class="modal-bg" id="mbg"><div class="modal"><h3>Rename</h3><div class="field"><label>Name</label><input id="mNameEdit" maxlength="40" value="${esc(current||"")}"></div><div class="modal-actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn accent" id="mSave">Save</button></div></div></div>`;
   const close=()=>{root.innerHTML="";};
   document.getElementById("mCancel").onclick=close;
   document.getElementById("mbg").onclick=e=>{if(e.target.id==="mbg")close();};
   const inp=document.getElementById("mNameEdit"); inp.focus(); inp.select();
   document.getElementById("mSave").onclick=async()=>{
     const n=inp.value.trim(); if(!n){inp.focus();return;}
-    await renamePerson(id,n,document.getElementById("mSwEmail").value);
+    await renamePerson(id,n);
     close();
   };
   inp.onkeydown=e=>{if(e.key==="Enter")document.getElementById("mSave").click();};
