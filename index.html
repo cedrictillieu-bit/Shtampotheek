@@ -37,8 +37,10 @@
   .brand{display:flex;align-items:center;gap:10px;font-family:'Bricolage Grotesque';font-weight:800;font-size:22px;letter-spacing:-.02em;margin-right:auto}
   .brand .tk{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;background:#fff;border:1px solid var(--line);border-radius:9px;transform:rotate(-8deg);overflow:hidden}
   .brand .tk img{width:100%;height:100%;object-fit:cover}
-  .me{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--slate)}
-  .me select{background:var(--card);border:1px solid var(--line-strong);border-radius:999px;padding:7px 12px;font-weight:600;color:var(--ink)}
+  .me-select{width:100%;margin-top:10px;background:var(--paper);border:1px solid var(--line-strong);border-radius:10px;padding:11px 13px;font-weight:600;color:var(--ink)}
+  .panel.who-needed{border-color:var(--vermilion);background:rgba(255,74,43,.05)}
+  .banner.who-hint{background:rgba(255,74,43,.09);border:1px solid rgba(255,74,43,.3);color:#a3271b;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .banner.who-hint button{background:var(--vermilion);color:#fff;font-weight:700;padding:5px 13px;border-radius:999px;font-size:13px;flex:0 0 auto}
   .tabs{display:flex;gap:4px;background:rgba(36,30,46,.06);padding:4px;border-radius:999px}
   .tab{padding:7px 16px;border-radius:999px;font-weight:600;font-size:14px;color:var(--slate)}
   .tab[aria-selected="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(36,30,46,.1)}
@@ -225,10 +227,7 @@
     /* Keep the bar to a single row on phones. */
     .tab{padding:7px 10px;font-size:13px}
     .tab-more-btn{padding:7px 8px}
-    /* The "I'm ___" select grows to the longest crew name and pushed the
-       header onto a third row — cap it so brand + picker share one line. */
     .topbar-inner{gap:10px;padding:12px 16px}
-    .me select{max-width:104px;text-overflow:ellipsis}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -237,7 +236,6 @@
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand"><span class="tk"><img src="icons/icon-192.png" alt=""></span> Shtamp</div>
-      <div class="me">I'm <select id="meSelect"><option value="">—</option></select></div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" data-tab="parties" aria-selected="true">Parties</button>
         <button class="tab" role="tab" data-tab="calendar" aria-selected="false">Calendar</button>
@@ -254,6 +252,7 @@
     </div>
   </div>
   <div id="storeBanner"></div>
+  <div id="whoBanner"></div>
   <div id="iosBanner"></div>
   <div id="notifBanner"></div>
   <div id="updateBanner"></div>
@@ -668,21 +667,25 @@ async function claimTicket(ticketId,holderId){
    RENDER  (identical UI to the local version)
    ============================================================ */
 function render(){
-  renderMeSelect();
   document.querySelectorAll(".tab[data-tab],.tab-menu-item").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
   renderMoreTabs();
   document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="calendar" ? calendarView() : currentTab==="people" ? peopleView() : currentTab==="money" ? moneyView() : currentTab==="stats" ? statsView() : archiveView();
-  wireView(); renderDetail(); renderBanner();
+  wireView(); renderDetail(); renderBanner(); renderWhoAmIBanner();
+}
+// Nudges anyone who hasn't picked themselves yet — without it they can't RSVP,
+// host a pre-party or claim tickets. Clears itself the moment they choose.
+function renderWhoAmIBanner(){
+  const el=document.getElementById("whoBanner");
+  if(!el) return;
+  if(me||!state.people.length){ el.innerHTML=""; return; }
+  el.innerHTML=`<div class="banner who-hint"><span>👤 Tell the app who you are so you can RSVP and claim tickets.</span><button type="button" id="goPickMe">Pick your name</button></div>`;
+  document.getElementById("goPickMe").onclick=()=>{ currentTab="people"; render(); document.getElementById("meSelect")?.focus(); };
 }
 function renderBanner(){
   const el=document.getElementById("storeBanner");
   el.innerHTML = lastError
     ? `<div class="banner err">⚠️ Couldn't reach the database. Check that your keys are pasted correctly and the table policies allow access. (${esc(lastError.message||"")})</div>`
     : "";
-}
-function renderMeSelect(){
-  const sel=document.getElementById("meSelect");
-  sel.innerHTML = `<option value="">—</option>`+sortedPeople().map(p=>`<option value="${p.id}" ${p.id===me?"selected":""}>${esc(p.name)}</option>`).join("");
 }
 function partiesView(){
   const parties=upcomingParties();
@@ -789,7 +792,8 @@ function peopleView(){
   const nLabel=notifLabel();
   const notifSection=nLabel?`<div class="panel" style="margin-top:20px"><h3>Notifications</h3><div class="sub">Get notified when a new party is added, and again on the day of each party.</div><button class="btn ghost sm" id="enableNotifs" style="margin-top:10px">${nLabel}</button></div>`:"";
   const installSection=deferredInstallPrompt?`<div class="panel" style="margin-top:20px"><h3>Install app</h3><div class="sub">Add Shtamp to your home screen so it opens like a real app.</div><button class="btn ghost sm" id="installApp" style="margin-top:10px">📲 Install app</button></div>`:"";
-  return head+list+`<div class="add-row"><input id="newPersonName" placeholder="Add a friend's name…" maxlength="40"><button class="btn" id="addPerson">Add</button></div>`+notifSection+installSection;
+  const whoSection=state.people.length?`<div class="panel${me?"":" who-needed"}" style="margin-bottom:20px"><h3>Which one are you?</h3><div class="sub">${me?"Used for your RSVPs, pre-party hosting and ticket claims.":"Pick yourself so you can RSVP and claim tickets."}</div><select id="meSelect" class="me-select"><option value="">— pick your name —</option>${sortedPeople().map(p=>`<option value="${p.id}" ${p.id===me?"selected":""}>${esc(p.name)}</option>`).join("")}</select></div>`:"";
+  return head+whoSection+list+`<div class="add-row"><input id="newPersonName" placeholder="Add a friend's name…" maxlength="40"><button class="btn" id="addPerson">Add</button></div>`+notifSection+installSection;
 }
 function statsView(){
   const head=`<div class="sec-head"><div><h2>Party stats</h2><p>How many past parties each person actually went to (marked "going", party date already passed).</p></div></div>`;
@@ -820,7 +824,7 @@ function renderDetail(){
   const st=partyStats(p), d=fmtDate(p.date);
   const ticketsRequired=p.tickets_required!==false;
   const myStatus=me?(p.attendance||{})[me]||"":"";
-  const myStatusPanel=`<div class="panel"><h3>Your status</h3>${me?`<div class="sub">Let the crew know if you're in.</div><div class="seg" data-person="${me}" style="margin-top:10px;width:fit-content"><button data-set="going" ${myStatus==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myStatus==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myStatus==="no"?'data-on="no"':''}>Can't</button></div>`:`<div class="sub">Pick who you are (top right, "I'm ___") to set your status.</div>`}</div>`;
+  const myStatusPanel=`<div class="panel"><h3>Your status</h3>${me?`<div class="sub">Let the crew know if you're in.</div><div class="seg" data-person="${me}" style="margin-top:10px;width:fit-content"><button data-set="going" ${myStatus==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myStatus==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myStatus==="no"?'data-on="no"':''}>Can't</button></div>`:`<div class="sub">Pick your name in the Crew tab to set your status.</div>`}</div>`;
   function rosterGroup(label,cls,people){
     if(!people.length) return "";
     const pills=people.map(person=>{
@@ -848,7 +852,7 @@ function renderDetail(){
   const myPp=me?ppa[me]||"":"";
   const prepMyStatus=me
     ?`<div class="sub" style="margin-top:12px">Your pre-party status:</div><div class="seg" data-preperson="${me}" style="margin-top:8px;width:fit-content"><button data-set="going" ${myPp==="going"?'data-on="going"':''}>Going</button><button data-set="maybe" ${myPp==="maybe"?'data-on="maybe"':''}>Maybe</button><button data-set="no" ${myPp==="no"?'data-on="no"':''}>Can't</button></div>`
-    :`<div class="sub" style="margin-top:12px">Pick who you are (top right, "I'm ___") to set your pre-party status.</div>`;
+    :`<div class="sub" style="margin-top:12px">Pick your name in the Crew tab to set your pre-party status.</div>`;
   const prepSummary=`<button type="button" id="prepartyToggle" style="display:flex;align-items:center;gap:8px;width:100%;margin-top:14px;padding:10px 12px;background:var(--paper);border:1px solid var(--line);border-radius:10px;flex-wrap:wrap"><span class="chip go">✓ ${ppGoing} going</span>${ppMaybe?`<span class="chip mb">? ${ppMaybe} maybe</span>`:""}${ppCant?`<span class="chip warn">${ppCant} can't</span>`:""}<span style="flex:1"></span><span class="sub" style="margin:0">${prepartyExpanded?"▲ hide":"▾ who"}</span></button>`;
   function prepGroup(label,cls,ids){
     if(!ids.length) return "";
@@ -972,6 +976,12 @@ function wireView(){
   if(notifBtn) notifBtn.onclick=enablePushNotifications;
   const installBtn=document.getElementById("installApp");
   if(installBtn) installBtn.onclick=installApp;
+  const meSel=document.getElementById("meSelect");
+  if(meSel) meSel.onchange=e=>{
+    me=e.target.value||null;
+    if(me) localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me");
+    render();
+  };
   const copyBtn=document.getElementById("copySettle");
   if(copyBtn) copyBtn.onclick=async()=>{
     const txt=settleUpText();
@@ -1001,7 +1011,7 @@ function wireDetail(){
   if(prepToggle) prepToggle.onclick=()=>{ prepartyExpanded=!prepartyExpanded; renderDetail(); };
   const hostBtn=document.getElementById("togglePrepartyHost");
   if(hostBtn) hostBtn.onclick=()=>{
-    if(!me){ alert("Pick who you are first (top right, \"I'm ___\")."); return; }
+    if(!me){ alert("Pick your name in the Crew tab first."); return; }
     togglePrepartyHost(openPartyId,me);
   };
   document.getElementById("editParty").onclick=()=>{
@@ -1217,7 +1227,6 @@ document.getElementById("moreTabsBtn").onclick=e=>{
   btn.setAttribute("aria-expanded",String(open));
 };
 document.addEventListener("click",e=>{ if(!e.target.closest(".tab-more")) closeTabMenu(); });
-document.getElementById("meSelect").onchange=e=>{me=e.target.value||null; if(me)localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me"); render();};
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!document.getElementById("tabMenu").hidden)closeTabMenu();else if(document.getElementById("modalRoot").innerHTML)document.getElementById("modalRoot").innerHTML="";else if(openPartyId){openPartyId=null;render();}}});
 window.addEventListener("popstate",()=>{ if(openPartyId){ openPartyId=null; render(); } });
 
