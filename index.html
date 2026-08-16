@@ -172,6 +172,7 @@
   .roster-group-label.go{color:var(--jade)}
   .roster-group-label.mb{color:var(--amber)}
   .roster-group-label.cant{color:var(--slate)}
+  .settle-locked{flex:0 0 auto;opacity:.35;font-size:13px;cursor:default}
   .name-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
   .name-pill{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
   .cal-nav{display:flex;align-items:center;gap:6px}
@@ -277,7 +278,7 @@ const supa = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_AN
 
 const AVATAR_COLORS = ["#FF4A2B","#12A66E","#E7920C","#6C5CE7","#0FA3B1","#E84393","#00897B","#8E44AD","#D35400","#2E86DE","#16A085","#C0392B","#7F8C8D","#2C3E50","#EA8685"];
 
-let state = { people: [], parties: [] };
+let state = { people: [], parties: [], payments: [] };
 let me = localStorage.getItem("guestlist-me") || null;
 let currentTab = "parties";
 let openPartyId = null;
@@ -394,15 +395,19 @@ function countdownLabel(dateStr){
    ============================================================ */
 let lastError = null;
 async function fetchAll(){
-  const [pe,pa,at,tk,ph,ppa] = await Promise.all([
+  const [pe,pa,at,tk,ph,ppa,pay] = await Promise.all([
     supa.from("people").select("*").order("created_at"),
     supa.from("parties").select("*").order("date",{ascending:true,nullsFirst:false}),
     supa.from("attendance").select("*"),
     supa.from("tickets").select("*").order("created_at"),
     supa.from("preparty_hosts").select("*"),
     supa.from("preparty_attendance").select("*"),
+    supa.from("payments").select("*").order("created_at",{ascending:false}),
   ]);
-  lastError = pe.error||pa.error||at.error||tk.error||ph.error||ppa.error||null;
+  // `payments` is optional — if that table hasn't been created yet the rest of
+  // the app should still work, just without settle-up. Don't alarm everyone.
+  const payMissing = pay.error && /payments/i.test(pay.error.message||"");
+  lastError = pe.error||pa.error||at.error||tk.error||ph.error||ppa.error||(payMissing?null:pay.error)||null;
   const people = pe.data||[];
   const parties = (pa.data||[]).map(p=>({...p, attendance:{}, tickets:[], prepartyHosts:[], prepartyAttendance:{}}));
   const byId = Object.fromEntries(parties.map(p=>[p.id,p]));
@@ -410,7 +415,18 @@ async function fetchAll(){
   (tk.data||[]).forEach(t=>{ if(byId[t.party_id]) byId[t.party_id].tickets.push({id:t.id,buyerId:t.buyer_id,holderId:t.holder_id,price:t.price}); });
   (ph.data||[]).forEach(h=>{ if(byId[h.party_id]) byId[h.party_id].prepartyHosts.push(h.person_id); });
   (ppa.data||[]).forEach(a=>{ if(byId[a.party_id]) byId[a.party_id].prepartyAttendance[a.person_id]=a.status; });
-  state = {people, parties};
+  const payments = (pay.data||[]).map(x=>({id:x.id, from:x.from_person, to:x.to_person, cents:x.amount_cents, at:x.created_at}));
+  state = {people, parties, payments};
+}
+async function addPayment(fromId,toId,cents){
+  const {error}=await supa.from("payments").insert({from_person:fromId,to_person:toId,amount_cents:cents});
+  if(error){ alert("Couldn't record that payment.\n\n"+error.message); return; }
+  await refresh();
+}
+async function delPayment(id){
+  const {error}=await supa.from("payments").delete().eq("id",id);
+  if(error){ alert("Couldn't undo that payment.\n\n"+error.message); return; }
+  await refresh();
 }
 async function refresh(){ if(!configured) return; await fetchAll(); render(); }
 
@@ -509,7 +525,8 @@ function partyLedger(p){
     personId:id, paid:paid[id]||0, owed:owed[id]||0, net:(paid[id]||0)-(owed[id]||0)
   }))};
 }
-// Running balance across every party. net > 0 means the group owes them.
+// Running balance across every party, less any payments already settled.
+// net > 0 means the group still owes them.
 function overallLedger(){
   const net={}, paid={}, owed={}, perParty=[];
   sortedParties().forEach(p=>{
@@ -522,11 +539,22 @@ function overallLedger(){
       owed[r.personId]=(owed[r.personId]||0)+r.owed;
     });
   });
+  // A settled payment cancels debt both ways: the payer's shortfall shrinks,
+  // the receiver's credit shrinks by the same amount.
+  const settled={};
+  (state.payments||[]).forEach(pm=>{
+    net[pm.from]=(net[pm.from]||0)+pm.cents;
+    net[pm.to]=(net[pm.to]||0)-pm.cents;
+    settled[pm.from]=(settled[pm.from]||0)+pm.cents;
+    settled[pm.to]=(settled[pm.to]||0)-pm.cents;
+  });
   const rows=Object.keys(net).map(id=>{
     const person=state.people.find(x=>x.id===id);
-    return {personId:id, name:person?person.name:"(removed)", net:net[id], paid:paid[id], owed:owed[id]};
+    return {personId:id, name:person?person.name:"(removed)", net:net[id],
+            paid:paid[id]||0, owed:owed[id]||0, settled:settled[id]||0};
   }).sort((a,b)=>b.net-a.net || a.name.localeCompare(b.name));
-  return {rows, perParty, total:perParty.reduce((s,x)=>s+x.total,0)};
+  return {rows, perParty, total:perParty.reduce((s,x)=>s+x.total,0),
+          settledTotal:(state.payments||[]).reduce((s,p)=>s+p.cents,0)};
 }
 // Fewest transfers that clear everyone out: repeatedly settle the biggest
 // debtor against the biggest creditor. Yields at most (people - 1) payments.
@@ -536,7 +564,8 @@ function settleUp(rows){
   const out=[]; let i=0,j=0;
   while(i<debt.length&&j<cred.length){
     const amt=Math.min(-debt[i].net, cred[j].net);
-    if(amt>0) out.push({from:debt[i].name, to:cred[j].name, amount:amt});
+    if(amt>0) out.push({fromId:debt[i].personId, toId:cred[j].personId,
+                        from:debt[i].name, to:cred[j].name, amount:amt});
     debt[i].net+=amt; cred[j].net-=amt;
     if(debt[i].net===0) i++;
     if(cred[j].net===0) j++;
@@ -716,7 +745,8 @@ function moneyView(){
 
   const owedTo=rows.filter(r=>r.net>0), owing=rows.filter(r=>r.net<0), square=rows.filter(r=>r.net===0);
   const outstanding=owedTo.reduce((s,r)=>s+r.net,0);
-  const summary=`<div class="stats" style="margin:0 0 18px"><div class="stat stat-group"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${eur(total)}</div><div class="l">Tickets total</div></div><div class="stat-mini"><div class="n mb">${eur(outstanding)}</div><div class="l">Still to settle</div></div></div></div></div>`;
+  const settledTotal=(state.payments||[]).reduce((s,p)=>s+p.cents,0);
+  const summary=`<div class="stats" style="margin:0 0 18px"><div class="stat stat-group"><div class="stat-mini-row"><div class="stat-mini"><div class="n tk">${eur(total)}</div><div class="l">Tickets total</div></div><div class="stat-mini"><div class="n mb">${eur(outstanding)}</div><div class="l">Still to settle</div></div>${settledTotal?`<div class="stat-mini"><div class="n go">${eur(settledTotal)}</div><div class="l">Paid off</div></div>`:""}</div></div></div>`;
 
   const personRow=r=>{
     const cls=r.net>0?"go":r.net<0?"cant":"none";
@@ -730,9 +760,29 @@ function moneyView(){
   }</div>`;
 
   const transfers=settleUp(rows);
-  const settle=`<div class="panel"><h3>Settle up</h3><div class="sub">${transfers.length?`The fewest payments that clear everything — ${transfers.length} transfer${transfers.length>1?"s":""}.`:"Everyone's square. Nothing to pay."}</div>${
-    transfers.length?`<div style="margin-top:6px">${transfers.map(t=>`<div class="tk-item"><span class="arrow">→</span><span><b>${esc(t.from)}</b> pays <b>${esc(t.to)}</b></span><span style="flex:1"></span><span class="tk-price">${eur(t.amount)}</span></div>`).join("")}</div>
+  const settleRows=transfers.map(t=>{
+    const mine=me&&(me===t.fromId||me===t.toId);
+    const action=!me
+      ? `<span class="sub" style="margin:0;font-size:12px">pick your name to settle</span>`
+      : mine
+        ? `<button class="btn accent sm" data-paid-from="${t.fromId}" data-paid-to="${t.toId}" data-paid-cents="${t.amount}">Mark paid</button>`
+        : `<span class="settle-locked" title="Only ${esc(t.from)} and ${esc(t.to)} can settle this">🔒</span>`;
+    return `<div class="tk-item"><span class="arrow">→</span><span><b>${esc(t.from)}</b> pays <b>${esc(t.to)}</b></span><span style="flex:1"></span><span class="tk-price">${eur(t.amount)}</span>${action}</div>`;
+  }).join("");
+  const settle=`<div class="panel"><h3>Settle up</h3><div class="sub">${transfers.length?`The fewest payments that clear everything — ${transfers.length} transfer${transfers.length>1?"s":""}. Only the two people in a payment can mark it paid.`:"Everyone's square. Nothing to pay."}</div>${
+    transfers.length?`<div style="margin-top:6px">${settleRows}</div>
     <button class="btn ghost sm" id="copySettle" style="margin-top:14px">📋 Copy summary</button>`:""}</div>`;
+
+  const pms=state.payments||[];
+  const paymentsLog=pms.length?`<div class="panel"><h3>Settled payments</h3><div class="sub">Already paid off. Undo one if it was logged by mistake.</div><div style="margin-top:6px">${
+    pms.map(pm=>{
+      const fromName=(state.people.find(x=>x.id===pm.from)||{}).name||"(removed)";
+      const toName=(state.people.find(x=>x.id===pm.to)||{}).name||"(removed)";
+      const mine=me&&(me===pm.from||me===pm.to);
+      const when=pm.at?new Date(pm.at).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):"";
+      return `<div class="tk-item"><span class="arrow" style="color:var(--jade)">✓</span><span><b>${esc(fromName)}</b> paid <b>${esc(toName)}</b></span><span style="flex:1"></span>${when?`<span class="sub" style="margin:0;font-size:12px">${when}</span>`:""}<span class="tk-price" style="color:var(--jade)">${eur(pm.cents)}</span>${mine?`<button class="icon-x" data-unpay="${pm.id}" title="Undo this payment">↩</button>`:`<span class="settle-locked" title="Only ${esc(fromName)} and ${esc(toName)} can undo this">🔒</span>`}</div>`;
+    }).join("")
+  }</div></div>`:"";
 
   const breakdown=`<div class="panel"><h3>Per party</h3><div class="sub">What each night cost, most recent first.</div>${
     [...perParty].reverse().map(pp=>{
@@ -745,7 +795,7 @@ function moneyView(){
     }).join("")
   }</div>`;
 
-  return head+summary+balances+settle+breakdown;
+  return head+summary+balances+settle+paymentsLog+breakdown;
 }
 function settleUpText(){
   const {rows}=overallLedger();
@@ -982,6 +1032,21 @@ function wireView(){
     if(me) localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me");
     render();
   };
+  document.querySelectorAll("[data-paid-from]").forEach(b=>b.onclick=()=>{
+    const from=b.dataset.paidFrom, to=b.dataset.paidTo, c=Number(b.dataset.paidCents);
+    // Guard again at click time, not just at render — `me` could have changed.
+    if(!me||(me!==from&&me!==to)) return;
+    const fromName=personName(from), toName=personName(to);
+    if(!confirm(`Mark as paid?\n\n${fromName} paid ${toName} ${eur(c)}.\n\nThis clears the debt for both of you.`)) return;
+    b.disabled=true; b.textContent="Saving…";
+    addPayment(from,to,c);
+  });
+  document.querySelectorAll("[data-unpay]").forEach(b=>b.onclick=()=>{
+    const pm=(state.payments||[]).find(x=>x.id===b.dataset.unpay);
+    if(!pm||!me||(me!==pm.from&&me!==pm.to)) return;
+    if(!confirm(`Undo this payment?\n\n${personName(pm.from)} → ${personName(pm.to)} ${eur(pm.cents)}\n\nThe debt comes back.`)) return;
+    delPayment(pm.id);
+  });
   const copyBtn=document.getElementById("copySettle");
   if(copyBtn) copyBtn.onclick=async()=>{
     const txt=settleUpText();
