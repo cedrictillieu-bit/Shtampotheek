@@ -163,6 +163,28 @@
   .roster-group-label.cant{color:var(--slate)}
   .name-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
   .name-pill{background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:4px}
+  .cal-nav{display:flex;align-items:center;gap:6px}
+  .cal-nav button{width:34px;height:34px;border-radius:9px;border:1px solid var(--line-strong);background:var(--card);font-size:19px;font-weight:700;line-height:1;display:inline-flex;align-items:center;justify-content:center;color:var(--ink)}
+  .cal-nav button:hover{border-color:var(--vermilion);color:var(--vermilion)}
+  .cal-nav button.btn{width:auto;height:34px;font-size:13px}
+  .cal-month-label{font-family:'Bricolage Grotesque';font-weight:800;font-size:20px;letter-spacing:-.02em;margin-bottom:10px}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .cal-dow{font-family:'Space Mono';font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--slate);text-align:center;padding-bottom:4px}
+  .cal-cell{background:var(--card);border:1px solid var(--line);border-radius:10px;min-height:76px;padding:5px;display:flex;flex-direction:column;gap:3px;overflow:hidden}
+  .cal-cell.empty-cell{background:transparent;border:none}
+  .cal-cell.has-party{border-color:var(--vermilion);background:rgba(255,74,43,.05)}
+  .cal-cell.today{outline:2px solid var(--ink);outline-offset:-2px}
+  .cal-daynum{font-family:'Space Mono';font-size:12px;font-weight:700;color:var(--slate);flex:0 0 auto}
+  .cal-cell.today .cal-daynum{color:var(--ink)}
+  .cal-party{background:var(--vermilion);color:#fff;border-radius:6px;padding:3px 5px;font-size:10.5px;font-weight:700;line-height:1.2;text-align:left;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto}
+  .cal-party:hover{filter:brightness(1.12)}
+  .cal-party.past{background:var(--slate)}
+  @media (max-width:560px){
+    .cal-grid{gap:3px}
+    .cal-cell{min-height:58px;padding:3px;border-radius:8px}
+    .cal-daynum{font-size:11px}
+    .cal-party{font-size:9px;padding:2px 3px}
+  }
   .link-danger{color:var(--slate);font-size:13px;font-weight:600}
   .link-danger:hover{color:var(--vermilion)}
   .icon-x{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;color:var(--slate);font-size:16px}
@@ -202,6 +224,7 @@
       <div class="me">I'm <select id="meSelect"><option value="">—</option></select></div>
       <div class="tabs" role="tablist">
         <button class="tab" role="tab" data-tab="parties" aria-selected="true">Parties</button>
+        <button class="tab" role="tab" data-tab="calendar" aria-selected="false">Calendar</button>
         <button class="tab" role="tab" data-tab="people" aria-selected="false">Crew</button>
         <button class="tab" role="tab" data-tab="stats" aria-selected="false">Stats</button>
         <button class="tab" role="tab" data-tab="archive" aria-selected="false">Archive</button>
@@ -244,7 +267,8 @@ let attendanceExpanded = false;
 let ticketsExpanded = false;
 let prepartyExpanded = false;
 let justOpenedParty = false;
-function openParty(id){ openPartyId=id; draftHolders=[]; draftSpares=0; attendanceExpanded=false; ticketsExpanded=false; prepartyExpanded=false; justOpenedParty=true; render(); }
+let calMonth = (()=>{ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth()}; })();
+function openParty(id){ openPartyId=id; draftHolders=[]; draftSpares=0; attendanceExpanded=false; ticketsExpanded=false; prepartyExpanded=false; justOpenedParty=true; history.pushState({shtampParty:id},""); render(); }
 
 /* ---------- utils ---------- */
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id"+Math.random().toString(36).slice(2));
@@ -558,7 +582,7 @@ async function claimTicket(ticketId,holderId){
 function render(){
   renderMeSelect();
   document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.tab===currentTab));
-  document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="people" ? peopleView() : currentTab==="stats" ? statsView() : archiveView();
+  document.getElementById("view").innerHTML = currentTab==="parties" ? partiesView() : currentTab==="calendar" ? calendarView() : currentTab==="people" ? peopleView() : currentTab==="stats" ? statsView() : archiveView();
   wireView(); renderDetail(); renderBanner();
 }
 function renderBanner(){
@@ -592,6 +616,32 @@ function archiveView(){
   if(!parties.length) return head+`<div class="empty"><div class="big">🗄️</div><h3>No past parties yet</h3><p>Once a dated party is over, it'll show up here automatically.</p></div>`;
   const cards=parties.map(p=>partyCard(p)).join("");
   return head+`<div class="grid">${cards}</div>`;
+}
+function calendarView(){
+  const {y,m}=calMonth;
+  const monthName=new Date(y,m,1).toLocaleString("en-US",{month:"long",year:"numeric"});
+  const head=`<div class="sec-head"><div><h2>Calendar</h2><p>Every party, month by month. Tap a day to open it.</p></div><div class="cal-nav"><button type="button" id="calPrev" title="Previous month">‹</button><button type="button" class="btn ghost sm" id="calToday">Today</button><button type="button" id="calNext" title="Next month">›</button></div></div>`;
+  // Map YYYY-MM-DD -> parties on that day
+  const byDate=new Map();
+  state.parties.forEach(p=>{ if(!p.date) return; if(!byDate.has(p.date)) byDate.set(p.date,[]); byDate.get(p.date).push(p); });
+  const pad=n=>String(n).padStart(2,"0");
+  const firstDow=(new Date(y,m,1).getDay()+6)%7; // Monday-first
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const todayKey=todayStr();
+  const dowRow=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=>`<div class="cal-dow">${d}</div>`).join("");
+  let cells="";
+  for(let i=0;i<firstDow;i++) cells+=`<div class="cal-cell empty-cell"></div>`;
+  for(let day=1;day<=daysInMonth;day++){
+    const key=`${y}-${pad(m+1)}-${pad(day)}`;
+    const dayParties=byDate.get(key)||[];
+    const isToday=key===todayKey;
+    const isPast=key<todayKey;
+    const dots=dayParties.map(p=>`<button type="button" class="cal-party${isPast?" past":""}" data-open="${p.id}" title="${esc(p.name)}">${esc(p.name)}</button>`).join("");
+    cells+=`<div class="cal-cell${dayParties.length?" has-party":""}${isToday?" today":""}"><div class="cal-daynum">${day}</div>${dots}</div>`;
+  }
+  const monthPartyCount=[...byDate.entries()].filter(([k])=>k.startsWith(`${y}-${pad(m+1)}`)).reduce((n,[,arr])=>n+arr.length,0);
+  const footer=`<p class="sub" style="margin-top:14px">${monthPartyCount?`${monthPartyCount} part${monthPartyCount===1?"y":"ies"} this month.`:"Nothing planned this month."}</p>`;
+  return head+`<div class="cal-month-label">${monthName}</div><div class="cal-grid">${dowRow}${cells}</div>${footer}`;
 }
 function peopleView(){
   const head=`<div class="sec-head"><div><h2>The crew</h2><p>Everyone in the group. Add friends so you can tag them on parties.</p></div></div>`;
@@ -784,9 +834,13 @@ function wireView(){
   if(notifBtn) notifBtn.onclick=enablePushNotifications;
   const installBtn=document.getElementById("installApp");
   if(installBtn) installBtn.onclick=installApp;
+  const calPrev=document.getElementById("calPrev"), calNext=document.getElementById("calNext"), calToday=document.getElementById("calToday");
+  if(calPrev) calPrev.onclick=()=>{ calMonth = calMonth.m===0?{y:calMonth.y-1,m:11}:{y:calMonth.y,m:calMonth.m-1}; render(); };
+  if(calNext) calNext.onclick=()=>{ calMonth = calMonth.m===11?{y:calMonth.y+1,m:0}:{y:calMonth.y,m:calMonth.m+1}; render(); };
+  if(calToday) calToday.onclick=()=>{ const d=new Date(); calMonth={y:d.getFullYear(),m:d.getMonth()}; render(); };
 }
 function wireDetail(){
-  document.getElementById("backBtn").onclick=()=>{openPartyId=null;render();};
+  document.getElementById("backBtn").onclick=()=>{history.back();};
   document.querySelectorAll(".seg").forEach(seg=>{
     const pid=seg.dataset.person, ppid=seg.dataset.preperson;
     seg.querySelectorAll("button").forEach(btn=>btn.onclick=()=>{
@@ -837,7 +891,7 @@ function wireDetail(){
   document.getElementById("deleteParty").onclick=async()=>{
     const p=state.parties.find(x=>x.id===openPartyId);
     if(!confirm(`Delete "${p.name}"? This can't be undone.`))return;
-    const id=openPartyId; openPartyId=null; await delParty(id);
+    const id=openPartyId; openPartyId=null; history.back(); await delParty(id);
   };
 }
 function headlinerFieldsHtml(vals){
@@ -993,6 +1047,7 @@ async function enablePushNotifications(){
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{currentTab=t.dataset.tab;render();});
 document.getElementById("meSelect").onchange=e=>{me=e.target.value||null; if(me)localStorage.setItem("guestlist-me",me); else localStorage.removeItem("guestlist-me"); render();};
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(document.getElementById("modalRoot").innerHTML)document.getElementById("modalRoot").innerHTML="";else if(openPartyId){openPartyId=null;render();}}});
+window.addEventListener("popstate",()=>{ if(openPartyId){ openPartyId=null; render(); } });
 
 /* ---------- boot ---------- */
 (async function(){
